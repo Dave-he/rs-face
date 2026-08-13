@@ -1,0 +1,20 @@
+[package]
+name = "rs-face"
+version = "0.1.0"
+edition = "2021"
+description = "零依赖 Rust 人脸检测:从视频 URL 提取所有含人脸的帧,按序号与时间戳命名"
+license = "MIT"
+
+# 零第三方依赖。
+# 所有 IO、HTTP、图像解码、PNG 编码、人脸检测都用 std 自行实现。
+# 视频抽帧通过系统 ffmpeg 子进程完成 (ffmpeg 是系统工具,不属于 Rust crate)。
+
+[[bin]]
+name = "rs-face"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

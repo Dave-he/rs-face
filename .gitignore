@@ -1,0 +1,29 @@
+# Build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Temp output
+/output
+/output_*
+/test_out
+/frames
+/tmp_*
+*.pgm
+!data/*.pgm
+*.ppm
+*.png
+*.jpg
+*.jpeg
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
