@@ -8,6 +8,7 @@ mod http;
 mod image;
 mod imgproc;
 mod linalg;
+mod png;
 mod ppm;
 mod recognition;
 mod saver;

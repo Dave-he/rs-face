@@ -212,10 +212,10 @@ impl Image {
         Ok(())
     }
 
-    /// 兼容 saver.rs 中调用的 save_png, 内部重定向到 PPM (扩展名为 .ppm)。
+    /// 兼容 saver.rs 中调用的 save_png, 内部用纯 std PNG 编码器 (zlib store 模式)。
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<(), BoxError> {
-        let p = path.as_ref().to_path_buf();
-        let replaced = p.with_extension("ppm");
-        self.save_ppm(&replaced)
+        let path = path.as_ref();
+        crate::png::write_png(path, self)?;
+        Ok(())
     }
 }
