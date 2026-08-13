@@ -35,6 +35,10 @@ pub struct DetectOpts {
     pub hog_threshold: f64,
     /// 相邻帧人脸框 IoU 高于此阈值视为重复, 不写盘。0 表示不去重 (默认 0.85)。
     pub dedup_iou: f32,
+    /// 是否开启人脸跟踪 (LBPH 聚类, 写 tracks.json)。默认关闭。
+    pub track: bool,
+    /// 人脸聚类阈值 (卡方距离, 越小越严格)。默认 0.5。
+    pub track_threshold: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +100,8 @@ impl Default for DetectOpts {
             hog_svm_path: None,
             hog_threshold: 0.0,
             dedup_iou: 0.0,
+            track: false,
+            track_threshold: 0.3,
         }
     }
 }
@@ -144,6 +150,8 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--hog-svm" => { opts.hog_svm_path = Some(take_path(args, &mut i)?); }
             "--hog-threshold" => { opts.hog_threshold = take_str(args, &mut i)?.parse()?; }
             "--dedup-iou" => { opts.dedup_iou = take_str(args, &mut i)?.parse()?; }
+            "--track" => { opts.track = true; }
+            "--track-threshold" => { opts.track_threshold = take_str(args, &mut i)?.parse()?; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }

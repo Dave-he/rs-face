@@ -11,6 +11,7 @@ mod linalg;
 mod ppm;
 mod recognition;
 mod saver;
+mod tracker;
 mod video;
 
 use std::path::{Path, PathBuf};
@@ -33,6 +34,10 @@ pub struct DetectorOpts {
     pub hog_threshold: f64,
     /// 相邻帧人脸 IoU 高于此阈值视为重复, 不写出。0 表示不去重。
     pub dedup_iou: f32,
+    /// 是否开启人脸跟踪 (LBPH 聚类, 写 tracks.json)。
+    pub track: bool,
+    /// 人脸聚类卡方距离阈值。
+    pub track_threshold: f64,
 }
 
 fn main() -> ExitCode {
@@ -206,6 +211,8 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 hog_svm_path: o.hog_svm_path.clone(),
                 hog_threshold: o.hog_threshold,
                 dedup_iou: o.dedup_iou,
+                track: o.track,
+                track_threshold: o.track_threshold,
             },
         )?;
         println!(
@@ -248,6 +255,8 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             hog_svm_path: o.hog_svm_path.clone(),
             hog_threshold: o.hog_threshold,
             dedup_iou: o.dedup_iou,
+            track: o.track,
+            track_threshold: o.track_threshold,
         },
     )?;
     println!(

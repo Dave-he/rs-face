@@ -2,6 +2,7 @@ use crate::cascade::Cascade;
 use crate::hog_svm::{self, HogSvmDetector};
 use crate::image::{BoxError, Image, Rect};
 use crate::imgproc::{IntegralImage, group_rectangles};
+use crate::tracker;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -164,6 +165,8 @@ pub fn detect_in_directory(
     let save_crops = opts.save_crops;
     let padding_ratio = opts.padding_ratio;
     let dedup_iou = opts.dedup_iou;
+    let track_enabled = opts.track;
+    let track_threshold = opts.track_threshold;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -187,7 +190,11 @@ pub fn detect_in_directory(
                     };
                     let faces = detect_faces(cascade_ref, &img, &det_opts);
                     if faces.is_empty() { continue; }
-                    let (ts_secs, frame_idx) = crate::saver::parse_frame_timestamp(&path);
+                    let (mut ts_secs, frame_idx) = crate::saver::parse_frame_timestamp(&path);
+                    // 兜底: 若文件名不含 ms 后缀 (ffmpeg `frame_000001.pgm`), 用 frame_idx 和 fps 推算秒数
+                    if ts_secs == 0.0 && frame_idx > 0 {
+                        ts_secs = (frame_idx as f64 - 1.0) / 1.0; // 默认 1 fps
+                    }
                     local.push(RawDetection {
                         idx: idx as u64 + 1,
                         ts_secs,
@@ -212,7 +219,7 @@ pub fn detect_in_directory(
     // 帧去重: 相邻帧若所有人脸 IoU > dedup_iou 且人脸数相同, 视为重复, 不写出。
     let mut prev_boxes: Option<Vec<[i32; 4]>> = None;
     let mut written = 0u64;
-    for det in all_det {
+    for det in all_det.iter() {
         let cur_boxes: Vec<[i32; 4]> = det.faces.iter().map(|r| [r.x, r.y, r.w, r.h]).collect();
         let is_dup = match &prev_boxes {
             Some(prev) if dedup_iou > 0.0 && prev.len() == cur_boxes.len() => {
@@ -247,6 +254,12 @@ pub fn detect_in_directory(
         println!("[detect] 去重: 写出 {} 张, 跳过去重 {} 张", written,
             stats.frames_with_faces.saturating_sub(written));
     }
+    // 跟踪: 用 LBPH 聚类同一人脸, 输出 tracks.json
+    if track_enabled && !all_det.is_empty() {
+        if let Err(e) = track_and_save(&mut all_det, output_dir.as_path(), track_threshold) {
+            eprintln!("[detect] 跟踪失败: {}", e);
+        }
+    }
     Ok(stats)
 }
 
@@ -276,6 +289,32 @@ struct RawDetection {
     frame_idx: u64,
     img: Image,
     faces: Vec<Rect>,
+}
+
+/// 计算人脸跟踪 (在 detect_faces 后, 写盘前; 写盘后用 face_id 标 manifest)。
+pub fn track_and_save(
+    detections: &mut Vec<RawDetection>,
+    output_dir: &std::path::Path,
+    track_threshold: f64,
+) -> Result<(), BoxError> {
+    if detections.is_empty() {
+        return Ok(());
+    }
+    let mut tracker = tracker::FaceTracker::new(track_threshold);
+    let mut face_ids: Vec<Vec<u32>> = Vec::with_capacity(detections.len());
+    for det in detections.iter() {
+        let mut ids = Vec::with_capacity(det.faces.len());
+        for f in &det.faces {
+            let id = tracker.register(&det.img, f, det.idx, det.ts_secs);
+            ids.push(id);
+        }
+        face_ids.push(ids);
+    }
+    let report = output_dir.join("tracks.json");
+    tracker.write_report(&report)?;
+    println!("[detect] 跟踪: {} 张不同人脸 → {}", tracker.num_tracks(), report.display());
+    // 暂时仅打印首尾, 详细信息在 tracks.json
+    Ok(())
 }
 
 pub fn detect_single_image(cascade: &Cascade, img: &Image, opts: &DetectionOpts) -> Vec<Rect> {

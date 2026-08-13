@@ -16,12 +16,21 @@ pub fn parse_frame_timestamp(path: &Path) -> (f64, u64) {
     let mut parts: Vec<&str> = name.split('_').collect();
     let mut frame_idx = 0u64;
     let mut ms = 0u64;
-    if parts.len() >= 2 {
+    if !parts.is_empty() {
         if let Some(last) = parts.pop() {
-            ms = last.trim_end_matches("ms").parse().unwrap_or(0);
-        }
-        if let Some(prev) = parts.pop() {
-            frame_idx = prev.parse().unwrap_or(0);
+            if last.ends_with("ms") {
+                // 输出文件名格式: `0001_00h-00m-00s-001ms` — 末段是毫秒
+                let s = last.trim_end_matches("ms");
+                if s.chars().all(|c| c.is_ascii_digit()) {
+                    ms = s.parse().unwrap_or(0);
+                }
+                if let Some(prev) = parts.pop() {
+                    frame_idx = prev.parse().unwrap_or(0);
+                }
+            } else if last.chars().all(|c| c.is_ascii_digit()) {
+                // ffmpeg 输出格式: `frame_000001` — 末段是帧编号
+                frame_idx = last.parse().unwrap_or(0);
+            }
         }
     }
     (ms as f64 / 1000.0, frame_idx)
