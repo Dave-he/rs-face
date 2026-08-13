@@ -163,6 +163,7 @@ pub fn detect_in_directory(
     let output_dir = output_dir.to_path_buf();
     let save_crops = opts.save_crops;
     let padding_ratio = opts.padding_ratio;
+    let dedup_iou = opts.dedup_iou;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -171,14 +172,13 @@ pub fn detect_in_directory(
         frames.chunks(chunk_size).map(|c| c.to_vec()).collect()
     };
 
-    let results: Vec<Result<Vec<crate::saver::FaceRecord>, BoxError>> = std::thread::scope(|scope| {
+    let results: Vec<Result<Vec<RawDetection>, BoxError>> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(chunks.len());
         for chunk in chunks {
             let cascade_ref: &Cascade = unsafe { &*(cascade_ptr as *const Cascade) };
             let det_opts = det_opts_clone.clone();
-            let output_dir = output_dir.clone();
-            handles.push(scope.spawn(move || -> Result<Vec<crate::saver::FaceRecord>, BoxError> {
-                let mut local_records = Vec::new();
+            handles.push(scope.spawn(move || -> Result<Vec<RawDetection>, BoxError> {
+                let mut local = Vec::new();
                 for (idx, path) in chunk {
                     let img = match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
                         "pgm" => Image::load_pgm(&path)?,
@@ -188,44 +188,94 @@ pub fn detect_in_directory(
                     let faces = detect_faces(cascade_ref, &img, &det_opts);
                     if faces.is_empty() { continue; }
                     let (ts_secs, frame_idx) = crate::saver::parse_frame_timestamp(&path);
-                    let rec = crate::saver::save_frame_with_faces(
-                        &img,
-                        &output_dir,
-                        idx as u64 + 1,
+                    local.push(RawDetection {
+                        idx: idx as u64 + 1,
                         ts_secs,
                         frame_idx,
-                        &faces,
-                        save_crops,
-                        padding_ratio,
-                    )?;
-                    local_records.push(rec);
+                        img,
+                        faces,
+                    });
                 }
-                Ok(local_records)
+                Ok(local)
             }));
         }
         handles.into_iter().map(|h| h.join().unwrap_or_else(|e| Err(format!("thread join failed: {:?}", e).into()))).collect()
     });
 
-    // 聚合结果
-    let mut all_records: Vec<crate::saver::FaceRecord> = Vec::new();
+    // 聚合 + 按 idx 排序
+    let mut all_det: Vec<RawDetection> = Vec::new();
     for r in results {
-        let recs = r?;
-        stats.frames_scanned += recs.len() as u64; // 仅含命中的帧
-        stats.frames_with_faces += recs.len() as u64;
-        for rec in &recs {
-            stats.images_written += rec.face_count as u64 + 1;
-        }
-        all_records.extend(recs);
+        all_det.extend(r?);
     }
-    // 按 idx 排序, 序号与时间戳对齐
-    all_records.sort_by_key(|r| r.index);
-    stats.records = all_records;
+    all_det.sort_by_key(|d| d.idx);
 
-    // 修正 frames_scanned = 总扫描数 (含未命中)
+    // 帧去重: 相邻帧若所有人脸 IoU > dedup_iou 且人脸数相同, 视为重复, 不写出。
+    let mut prev_boxes: Option<Vec<[i32; 4]>> = None;
+    let mut written = 0u64;
+    for det in all_det {
+        let cur_boxes: Vec<[i32; 4]> = det.faces.iter().map(|r| [r.x, r.y, r.w, r.h]).collect();
+        let is_dup = match &prev_boxes {
+            Some(prev) if dedup_iou > 0.0 && prev.len() == cur_boxes.len() => {
+                prev.iter().zip(cur_boxes.iter()).all(|(a, b)| iou(*a, *b) > dedup_iou)
+            }
+            _ => false,
+        };
+        if is_dup {
+            // 跳过写盘, 但仍计入 frames_with_faces (视频流命中)
+            stats.frames_with_faces += 1;
+            prev_boxes = Some(cur_boxes);
+            continue;
+        }
+        let rec = crate::saver::save_frame_with_faces(
+            &det.img,
+            &output_dir,
+            det.idx,
+            det.ts_secs,
+            det.frame_idx,
+            &det.faces,
+            save_crops,
+            padding_ratio,
+        )?;
+        stats.images_written += rec.face_count as u64 + 1;
+        stats.records.push(rec);
+        stats.frames_with_faces += 1;
+        prev_boxes = Some(cur_boxes);
+        written += 1;
+    }
     stats.frames_scanned = total as u64;
-    stats.frames_with_faces = stats.records.len() as u64;
-
+    if dedup_iou > 0.0 {
+        println!("[detect] 去重: 写出 {} 张, 跳过去重 {} 张", written,
+            stats.frames_with_faces.saturating_sub(written));
+    }
     Ok(stats)
+}
+
+/// IoU (Intersection over Union) of two axis-aligned bounding boxes.
+fn iou(a: [i32; 4], b: [i32; 4]) -> f32 {
+    let ax2 = a[0] + a[2];
+    let ay2 = a[1] + a[3];
+    let bx2 = b[0] + b[2];
+    let by2 = b[1] + b[3];
+    let ix1 = a[0].max(b[0]);
+    let iy1 = a[1].max(b[1]);
+    let ix2 = ax2.min(bx2);
+    let iy2 = ay2.min(by2);
+    let iw = (ix2 - ix1).max(0);
+    let ih = (iy2 - iy1).max(0);
+    let inter = (iw * ih) as f32;
+    if inter <= 0.0 { return 0.0; }
+    let area_a = (a[2] * a[3]) as f32;
+    let area_b = (b[2] * b[3]) as f32;
+    inter / (area_a + area_b - inter)
+}
+
+/// 检测中间结构: 排序前保留图像, 排序后写盘 (Image 不可 Send + 不可 Clone 全图, 改用 Arc 共享)。
+struct RawDetection {
+    idx: u64,
+    ts_secs: f64,
+    frame_idx: u64,
+    img: Image,
+    faces: Vec<Rect>,
 }
 
 pub fn detect_single_image(cascade: &Cascade, img: &Image, opts: &DetectionOpts) -> Vec<Rect> {

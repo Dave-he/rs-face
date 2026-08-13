@@ -33,6 +33,8 @@ pub struct DetectOpts {
     pub hog_svm_path: Option<PathBuf>,
     /// HOG-SVM 检测阈值 (越大越严格, 0 表示不设阈值)。
     pub hog_threshold: f64,
+    /// 相邻帧人脸框 IoU 高于此阈值视为重复, 不写盘。0 表示不去重 (默认 0.85)。
+    pub dedup_iou: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +95,7 @@ impl Default for DetectOpts {
             flip_detect: false,
             hog_svm_path: None,
             hog_threshold: 0.0,
+            dedup_iou: 0.0,
         }
     }
 }
@@ -140,6 +143,7 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--flip-detect" => { opts.flip_detect = true; }
             "--hog-svm" => { opts.hog_svm_path = Some(take_path(args, &mut i)?); }
             "--hog-threshold" => { opts.hog_threshold = take_str(args, &mut i)?.parse()?; }
+            "--dedup-iou" => { opts.dedup_iou = take_str(args, &mut i)?.parse()?; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }
@@ -274,6 +278,7 @@ pub fn print_help() {
     println!("  --flip-detect       在水平翻转图上再做一次检测 (捕获镜像侧脸)");
     println!("  --hog-svm <path>    加载 HOG+SVM 第二阶段检测器 (Dalal-Triggs 2005)");
     println!("  --hog-threshold <f> HOG+SVM 决策阈值 [默认: 0.0]");
+    println!("  --dedup-iou <f>     相邻帧人脸 IoU > f 视为重复, 不写盘 [默认: 0.0 = 不去重]");
     println!();
     println!("train 参数:");
     println!("  --dataset <dir>     数据集目录（每个子目录=一个人,或按 filename_label.ext 命名）");

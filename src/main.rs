@@ -31,6 +31,8 @@ pub struct DetectorOpts {
     pub flip_detect: bool,
     pub hog_svm_path: Option<std::path::PathBuf>,
     pub hog_threshold: f64,
+    /// 相邻帧人脸 IoU 高于此阈值视为重复, 不写出。0 表示不去重。
+    pub dedup_iou: f32,
 }
 
 fn main() -> ExitCode {
@@ -203,6 +205,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 flip_detect: o.flip_detect,
                 hog_svm_path: o.hog_svm_path.clone(),
                 hog_threshold: o.hog_threshold,
+                dedup_iou: o.dedup_iou,
             },
         )?;
         println!(
@@ -244,6 +247,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             flip_detect: o.flip_detect,
             hog_svm_path: o.hog_svm_path.clone(),
             hog_threshold: o.hog_threshold,
+            dedup_iou: o.dedup_iou,
         },
     )?;
     println!(
