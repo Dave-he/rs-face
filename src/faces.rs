@@ -81,15 +81,6 @@ impl EigenfacesModel {
     pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), BoxError> {
         let mut s = String::new();
         s.push_str("EIGENFACES_V1\n");
-        s.push_str(&format!("components {} {}\n", self.eigenvectors.rows, self.eigenvectors.cols));
-        s.push_str(&format!("eigenvalues {}\n", self.eigenvalues.len()));
-        for &v in &self.eigenvalues {
-            s.push_str(&format!("{:.10}\n", v));
-        }
-        s.push_str(&format!("mean {}\n", self.mean.len()));
-        for &v in &self.mean {
-            s.push_str(&format!("{:.10}\n", v));
-        }
         s.push_str(&format!("eigenvectors {} {}\n", self.eigenvectors.rows, self.eigenvectors.cols));
         for r in 0..self.eigenvectors.rows {
             for c in 0..self.eigenvectors.cols {
@@ -97,6 +88,14 @@ impl EigenfacesModel {
                 s.push_str(&format!("{:.10}", self.eigenvectors.get(r, c)));
             }
             s.push('\n');
+        }
+        s.push_str(&format!("eigenvalues {}\n", self.eigenvalues.len()));
+        for &v in &self.eigenvalues {
+            s.push_str(&format!("{:.10}\n", v));
+        }
+        s.push_str(&format!("mean {}\n", self.mean.len()));
+        for &v in &self.mean {
+            s.push_str(&format!("{:.10}\n", v));
         }
         s.push_str(&format!("projections {} {}\n", self.projections.len(), if self.projections.is_empty() { 0 } else { self.projections[0].len() }));
         for p in &self.projections {
@@ -125,18 +124,16 @@ impl EigenfacesModel {
         let mut lines = content.lines();
         let header = lines.next().ok_or("bad model")?.trim();
         if header != "EIGENFACES_V1" { return Err("Not an Eigenfaces model".into()); }
-        let eigenvectors = parse_matrix(&mut lines, "components")?;
+        let eigenvectors = parse_matrix(&mut lines, "eigenvectors")?;
         let eigenvalues = parse_list_f64(&mut lines, "eigenvalues")?;
         let mean = parse_list_f64(&mut lines, "mean")?;
-        let _ev_hdr = lines.next();
-        let ev_data = eigenvectors.clone();
         let projections = parse_matrix_vec(&mut lines, "projections")?;
         let labels = parse_list_usize(&mut lines, "labels")?;
         let names = parse_list_str(&mut lines, "names")?;
         let threshold_line = lines.next().ok_or("no threshold")?.trim();
         let threshold: f64 = threshold_line.strip_prefix("threshold ").ok_or("bad threshold")?.parse()?;
         Ok(Self {
-            eigenvectors: ev_data,
+            eigenvectors,
             eigenvalues,
             mean,
             projections,

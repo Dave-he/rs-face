@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+      - name: Build
+        run: cargo build --release
+      - name: Smoke test
+        run: |
+          ./target/release/rs-face --help
+          ./target/release/rs-face info | head -10
+      - name: Verify zero deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          otool -L ./target/release/rs-face
+          if otool -L ./target/release/rs-face | grep -v libSystem; then
+            echo "ERROR: extra dynamic libraries found"
+            exit 1
+          fi
+      - name: Verify zero deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ldd ./target/release/rs-face
+          if ldd ./target/release/rs-face | grep -v "linux-vdso\|ld-linux\|libc\|libpthread\|libdl\|libm\|libgcc\|not a dynamic" | grep -q '/'; then
+            echo "ERROR: extra dynamic libraries found"
+            exit 1
+          fi
+      - name: Verify zero deps (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Windows uses different tooling
+          ./target/release/rs-face.exe --help

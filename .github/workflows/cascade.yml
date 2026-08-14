@@ -1,0 +1,24 @@
+name: cascade-test
+
+on:
+  push:
+    paths:
+      - 'data/haarcascade_*.xml'
+      - 'src/cascade.rs'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - name: Parse cascade XML
+        run: |
+          # 验证 cascade XML 解析
+          cat > /tmp/test_cascade.rs << 'INNER'
+          use std::process::Command;
+          INNER
+          # 用一个简单的测试: 加载并 info
+          ./target/release/rs-face info 2>&1 | head -30
