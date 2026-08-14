@@ -42,6 +42,8 @@ pub struct DetectorOpts {
     pub track_threshold: f64,
     /// 仅输出每个 track 的代表帧 (需要 --track), 节省 90% 空间。
     pub key_frames_only: bool,
+    /// 裁剪并对齐人脸后再保存 (--save-crops 时生效)。
+    pub align_crops: bool,
 }
 
 fn main() -> ExitCode {
@@ -218,6 +220,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 track: o.track,
                 track_threshold: o.track_threshold,
                 key_frames_only: o.key_frames_only,
+                align_crops: o.align_crops,
             },
         )?;
         println!(
@@ -263,6 +266,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             track: o.track,
             track_threshold: o.track_threshold,
             key_frames_only: o.key_frames_only,
+            align_crops: o.align_crops,
         },
     )?;
     println!(
@@ -312,6 +316,7 @@ fn cmd_detect_image(o: args::DetectOpts, img_path: &Path, started: Instant) -> R
         &[],
         o.save_crops,
         o.padding_ratio,
+        o.align_crops,
     )?;
     println!("[detect] 输出: {}/{}", o.output.display(), rec.file_name);
     println!("[detect] 用时: {:.2}s", started.elapsed().as_secs_f64());

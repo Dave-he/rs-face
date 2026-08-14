@@ -1,3 +1,4 @@
+use crate::align;
 use crate::image::{BoxError, Image, Rect};
 use std::path::{Path, PathBuf};
 
@@ -59,6 +60,7 @@ pub fn save_frame_with_faces(
     face_ids: &[u32],
     save_crops: bool,
     padding_ratio: f32,
+    align_crops: bool,
 ) -> Result<FaceRecord, BoxError> {
     std::fs::create_dir_all(out_dir)?;
     let ts = format_timestamp(timestamp_secs);
@@ -76,13 +78,19 @@ pub fn save_frame_with_faces(
     for (i, f) in faces.iter().enumerate() {
         boxes.push([f.x, f.y, f.w, f.h]);
         if let (Some(ref cd), true) = (crops_dir.as_ref(), save_crops) {
-            let px = (f.w as f32 * padding_ratio) as i32;
-            let py = (f.h as f32 * padding_ratio) as i32;
-            let x = (f.x - px).max(0) as usize;
-            let y = (f.y - py).max(0) as usize;
-            let w = (f.w + 2 * px).min(img.width as i32 - x as i32) as usize;
-            let h = (f.h + 2 * py).min(img.height as i32 - y as i32) as usize;
-            let crop = img.crop(x, y, w, h);
+            let crop = if align_crops {
+                // 5 点对齐 → 92x112 灰度
+                let points = crate::align::detect_face_center_projection(&img.data, img.width, img.height, f);
+                crate::align::align_face(img, f, &points, 92, 112)
+            } else {
+                let px = (f.w as f32 * padding_ratio) as i32;
+                let py = (f.h as f32 * padding_ratio) as i32;
+                let x = (f.x - px).max(0) as usize;
+                let y = (f.y - py).max(0) as usize;
+                let w = (f.w + 2 * px).min(img.width as i32 - x as i32) as usize;
+                let h = (f.h + 2 * py).min(img.height as i32 - y as i32) as usize;
+                img.crop(x, y, w, h)
+            };
             let crop_name = format!("{:04}_{}_face{:02}.png", index, ts, i + 1);
             crop.save_png(&cd.join(&crop_name))?;
         }

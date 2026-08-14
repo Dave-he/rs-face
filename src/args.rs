@@ -41,6 +41,8 @@ pub struct DetectOpts {
     pub track_threshold: f64,
     /// 仅输出每个 track 的代表帧 (1 张/人脸), 节省 90% 空间。需要 --track。
     pub key_frames_only: bool,
+    /// 裁剪并对齐人脸 (固定 92x112, 双眼水平) 后再保存。需要 --save-crops。
+    pub align_crops: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +107,7 @@ impl Default for DetectOpts {
             track: false,
             track_threshold: 0.3,
             key_frames_only: false,
+            align_crops: false,
         }
     }
 }
@@ -156,6 +159,7 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--track" => { opts.track = true; }
             "--track-threshold" => { opts.track_threshold = take_str(args, &mut i)?.parse()?; }
             "--key-frames-only" => { opts.key_frames_only = true; }
+            "--align-crops" => { opts.align_crops = true; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }

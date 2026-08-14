@@ -172,6 +172,7 @@ pub fn detect_in_directory(
     let track_enabled = opts.track;
     let track_threshold = opts.track_threshold;
     let key_frames_only = opts.key_frames_only && track_enabled;
+    let align_crops = opts.align_crops;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -297,6 +298,7 @@ pub fn detect_in_directory(
             face_ids,
             save_crops,
             padding_ratio,
+            align_crops,
         )?;
         stats.images_written += rec.face_count as u64 + 1;
         stats.records.push(rec);
