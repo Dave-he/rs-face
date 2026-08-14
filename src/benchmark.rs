@@ -643,6 +643,63 @@ pub fn write_markdown(
     Ok(())
 }
 
+/// 多算法合并报告: 一个数据集 × N 算法, 每个算法一节 + 总览对比表。
+pub fn write_combined_markdown(
+    out_path: &Path,
+    ids: &[IdentificationReport],
+    vers: &[VerificationReport],
+    dataset_name: &str,
+    dataset_dir: &Path,
+) -> Result<(), BoxError> {
+    let mut f = std::fs::File::create(out_path)?;
+    writeln!(f, "# 人脸识别 / 验证基准 (rs-face)")?;
+    writeln!(f)?;
+    writeln!(f, "- 数据集: `{}` ({})", dataset_name, dataset_dir.display())?;
+    writeln!(f, "- 时间: {}", chrono_like_now())?;
+    writeln!(f, "- 算法数: {}", ids.len().max(vers.len()))?;
+
+    // 总览对比表 (先放, 方便快速扫描)
+    if !ids.is_empty() || !vers.is_empty() {
+        writeln!(f)?;
+        writeln!(f, "## 📊 总览对比")?;
+        writeln!(f)?;
+        writeln!(f, "| 算法 | Top-1 | Top-5 | AUC | EER | 最佳准确率 | 训练/折 |")?;
+        writeln!(f, "|---|---:|---:|---:|---:|---:|---:|")?;
+        let n = ids.len().max(vers.len());
+        for i in 0..n {
+            let id = ids.get(i);
+            let ver = vers.get(i);
+            let alg = id.map(|r| r.algorithm.clone())
+                .or_else(|| ver.map(|r| r.algorithm.clone()))
+                .unwrap_or_else(|| "?".to_string());
+            let top1 = id.map(|r| format!("{:.2}%", r.top1 * 100.0)).unwrap_or_else(|| "-".to_string());
+            let top5 = id.map(|r| format!("{:.2}%", r.top5 * 100.0)).unwrap_or_else(|| "-".to_string());
+            let auc = ver.map(|r| format!("{:.4}", r.auc)).unwrap_or_else(|| "-".to_string());
+            let eer = ver.map(|r| format!("{:.4}", r.eer)).unwrap_or_else(|| "-".to_string());
+            let best = ver.map(|r| format!("{:.2}%", r.best_accuracy * 100.0)).unwrap_or_else(|| "-".to_string());
+            let train = id.map(|r| {
+                let avg_ms = r.train_ms_per_fold.iter().sum::<u64>() as f64 / r.folds.max(1) as f64;
+                format!("{:.0}ms", avg_ms)
+            }).unwrap_or_else(|| "-".to_string());
+            writeln!(f, "| `{}` | {} | {} | {} | {} | {} | {} |", alg, top1, top5, auc, eer, best, train)?;
+        }
+    }
+    writeln!(f)?;
+
+    // 每个算法一节
+    for id in ids {
+        writeln!(f, "---")?;
+        writeln!(f)?;
+        write_identification_md(&mut f, id)?;
+    }
+    for ver in vers {
+        writeln!(f, "---")?;
+        writeln!(f)?;
+        write_verification_md(&mut f, ver)?;
+    }
+    Ok(())
+}
+
 fn chrono_like_now() -> String {
     // 零依赖: 使用 SystemTime 算 unix epoch, 然后手动格式化
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)

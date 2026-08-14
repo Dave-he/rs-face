@@ -380,11 +380,12 @@ pub fn print_help() {
     println!("  --dataset <dir>     数据集目录 (<class>/<file>.pgm)");
     println!("  --out <file>        输出 Markdown 报告 [默认: ./BENCH_RECOGNITION.local.md]");
     println!("  --mode <m>          identification|verification|both [默认: both]");
-    println!("  --algorithm <a>     eigenfaces|fisherfaces|lbph [默认: eigenfaces]");
+    println!("  --algorithm <a>     eigenfaces|fisherfaces|lbph|all [默认: eigenfaces]");
     println!("  --folds <k>         K 折交叉验证 [默认: 5]");
     println!("  --max-pairs <n>     验证任务最大配对数 [默认: 2000]");
     println!("  --seed <n>          RNG 种子 [默认: 42]");
     println!("  --size WxH          训练/识别图像尺寸 [默认: 92x112]");
+    println!("  'all' 同时跑三个算法并合并为一份报告 (含总览对比表)");
     println!();
     println!("示例:");
     println!("  检测视频:  rs-face detect --url <URL> --output ./out --fps 1 --save-crops");

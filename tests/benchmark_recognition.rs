@@ -55,6 +55,32 @@ fn smoke_benchmark_runs() {
 }
 
 #[test]
+fn smoke_benchmark_all_algorithms() {
+    if !bench_exists() { return; }
+    // --algorithm all 应一次跑三个算法并合并为一份报告
+    let out = run_bench(&[
+        "benchmark",
+        "--dataset", DATASETS_DIR,
+        "--algorithm", "all",
+        "--folds", "2",
+        "--max-pairs", "100",
+        "--out", "/tmp/rs_face_bench_all_smoke.md",
+    ]);
+    assert!(out.status.success(), "benchmark --algorithm all must succeed: {}",
+        String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // 每个算法的输出都必须出现
+    assert!(stdout.contains("(Eigenfaces)"), "missing Eigenfaces result");
+    assert!(stdout.contains("(Fisherfaces)"), "missing Fisherfaces result");
+    assert!(stdout.contains("(LBPH)"), "missing LBPH result");
+    // 报告文件应包含总览对比表
+    let report = std::fs::read_to_string("/tmp/rs_face_bench_all_smoke.md").expect("read report");
+    assert!(report.contains("总览对比"), "report should have 总览对比 table");
+    assert!(report.contains("eigenfaces") && report.contains("fisherfaces") && report.contains("lbph"),
+        "report should list all three algorithms");
+}
+
+#[test]
 #[ignore = "完整基准, 默认不跑; 启用: cargo test --release -- --ignored full_bench"]
 fn full_bench_orl_eigenfaces() {
     if !bench_exists() {
