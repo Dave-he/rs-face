@@ -505,6 +505,7 @@ pub fn generate_pairs(labels: &[usize], max_pairs: usize, seed: u64) -> Vec<Pair
     let mut rng = Rng::new(seed.wrapping_mul(0x9E3779B97F4A7C15));
     let all_idx: Vec<usize> = (0..labels.len()).collect();
     let mut neg: Vec<Pair> = Vec::new();
+    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     let mut attempts = 0usize;
     while neg.len() < target_neg && attempts < target_neg * 20 {
         attempts += 1;
@@ -512,22 +513,14 @@ pub fn generate_pairs(labels: &[usize], max_pairs: usize, seed: u64) -> Vec<Pair
         let b = all_idx[rng.gen_range(all_idx.len())];
         if a == b { continue; }
         if labels[a] == labels[b] { continue; }
-        // 去重 (无序对)
         let key = if a < b { (a, b) } else { (b, a) };
-        let already = neg.iter().any(|p| {
-            let k = if p.i < p.j { (p.i, p.j) } else { (p.j, p.i) };
-            k == key
-        });
-        if already { continue; }
+        if !seen.insert(key) { continue; }
         neg.push(Pair { i: a, j: b, same: false });
     }
     let mut all_pairs = pos;
     all_pairs.extend(neg);
-    let mut rng = Rng::new(seed);
-    rng.shuffle(&mut all_pairs.iter_mut().enumerate().map(|(i, _)| i).collect::<Vec<_>>());
-    // 上面 shuffle 不对 (借用问题), 改为 Fisher-Yates on indices:
     let mut indices: Vec<usize> = (0..all_pairs.len()).collect();
-    rng.shuffle(&mut indices);
+    Rng::new(seed).shuffle(&mut indices);
     indices.into_iter().map(|i| all_pairs[i].clone()).collect()
 }
 
