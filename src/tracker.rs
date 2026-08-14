@@ -1,13 +1,17 @@
 // 在线人脸聚类跟踪器
 //
-// 没有预训练模型的情况下, 我们在 detect 流程中, 对每帧检测到的每张人脸
-// 提取 LBPH 直方图 (8x8 网格, 256 bin), 与已经见过的"人脸库"做卡方距离比对:
-//   - 距离 < merge_threshold  →  归到已存在的脸 (返回 face_id)
-//   - 否则                    →  新建脸 (返回新 face_id)
+// 用 LBPH (Local Binary Patterns Histograms) 做人脸聚类, 教学视频效果最佳:
+// - 抗光照变化 (LBP 不变)
+// - 简单, 计算快
+// - 8x8 网格, 256 bin, 16384 维直方图
 //
-// 由于同一个人的 LBPH 直方图在光照/姿态变化时会有 ±30% 抖动, 阈值 0.8 适合教学视频。
+// 流程:
+//   1. 人脸 → 92x112 灰度 → 直方图均衡化 → LBPH (8x8 网格, 256 bin)
+//   2. 与画廊做余弦距离比对
+//   3. 距离 < merge_threshold + 空间位置约束 (中心 < 100px) → 归并
+//   4. 画廊在线均值更新 (0.8 老 + 0.2 新) 吸收漂移
 //
-// 输出: 手写 JSON 报告 (零依赖, 不引入 serde_json)。
+// 输出: 手写 JSON 报告 (零依赖)
 
 use crate::image::{Image, Rect};
 use crate::recognition::LBPHModel;
@@ -171,6 +175,7 @@ impl FaceTracker {
         s.push_str(&format!("  \"summary\": {{\n"));
         s.push_str(&format!("    \"total_unique_faces\": {},\n", self.tracks.len()));
         s.push_str(&format!("    \"merge_threshold\": {},\n", self.merge_threshold));
+        s.push_str(&format!("    \"feature\": \"LBPH (8x8 grid, 256 bin)\",\n"));
         s.push_str(&format!("    \"face_size\": [{}, {}],\n", self.face_w, self.face_h));
         s.push_str(&format!("    \"grid\": [{}, {}]\n", self.grid_x, self.grid_y));
         s.push_str("  },\n");
@@ -199,19 +204,6 @@ impl FaceTracker {
         s.push_str("}\n");
         std::fs::write(path, s)
     }
-}
-
-fn chi_square_one_to_one(a: &[f64], b: &[f64]) -> f64 {
-    if a.len() != b.len() { return f64::INFINITY; }
-    let mut s = 0.0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        let denom = x + y;
-        if denom > 0.0 {
-            let d = x - y;
-            s += (d * d) / denom;
-        }
-    }
-    s / 2.0
 }
 
 /// 余弦距离 = 1 - 余弦相似度。两个归一化直方图的余弦距离越小越相似。
