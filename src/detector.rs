@@ -345,7 +345,13 @@ pub fn detect_in_directory(
     }
     // 跟踪: 把已有的 face_ids 写到 tracks.json + report.html
     if track_enabled && !all_det.is_empty() {
-        if let Some(ref t) = tracker {
+        if let Some(ref mut t) = tracker {
+            let n_before = t.num_tracks();
+            t.merge_similar_tracks(track_threshold);
+            let n_after = t.num_tracks();
+            if n_before != n_after {
+                println!("[detect] 跨窗口合并: {} → {}", n_before, n_after);
+            }
             let tracks = t.tracks().to_vec();
             let report_path = output_dir.join("tracks.json");
             let _ = t.write_report(&report_path);
@@ -414,6 +420,13 @@ pub fn track_and_save(
         face_ids.push(ids);
     }
     let report = output_dir.join("tracks.json");
+    // 后处理: 跨窗口合并同一人脸 (处理中空/转场)
+    let n_before = tracker.num_tracks();
+    tracker.merge_similar_tracks(track_threshold);
+    let n_after = tracker.num_tracks();
+    if n_before != n_after {
+        println!("[detect] 跨窗口合并: {} 个 track → {} 个", n_before, n_after);
+    }
     tracker.write_report(&report)?;
     println!("[detect] 跟踪: {} 张不同人脸 → {}", tracker.num_tracks(), report.display());
     Ok(tracker.tracks().to_vec())

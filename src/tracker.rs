@@ -168,6 +168,96 @@ impl FaceTracker {
     pub fn num_tracks(&self) -> usize { self.tracks.len() }
     pub fn tracks(&self) -> &[FaceTrack] { &self.tracks }
 
+    /// 后处理: 把位置相近 + 描述子相似 + 时间不重叠的轨道合并。
+    /// 解决因为中空/转场导致的同一张脸被切成 N 段的问题。
+    pub fn merge_similar_tracks(&mut self, merge_threshold: f64) {
+        if self.tracks.len() < 2 { return; }
+        let mut merged_into: std::collections::HashMap<usize, usize> = std::collections::HashMap::new(); // 旧 id -> 新 id
+        let track_count = self.tracks.len();
+        for i in 0..track_count {
+            let mut cur = i;
+            loop {
+                if let Some(&next) = merged_into.get(&cur) {
+                    cur = next;
+                } else {
+                    break;
+                }
+            }
+            for j in (i + 1)..track_count {
+                let mut cj = j;
+                while let Some(&n) = merged_into.get(&cj) {
+                    cj = n;
+                }
+                if cur == cj { continue; }
+                // 位置相近? 同位置 + 描述子相似 = 合并 (允许时间重叠, 例如转场)
+                let box_a = self.tracks[cur].sample_box;
+                let box_b = self.tracks[cj].sample_box;
+                let ax = box_a[0] + box_a[2] / 2;
+                let ay = box_a[1] + box_a[3] / 2;
+                let bx = box_b[0] + box_b[2] / 2;
+                let by = box_b[1] + box_b[3] / 2;
+                let dx = (ax - bx).abs();
+                let dy = (ay - by).abs();
+                if dx > 100 || dy > 100 { continue; }
+                // 描述子相似? 放宽 0.05 容差 (历史画廊 EMA 漂移)
+                let d = cosine_distance(&self.galleries[cur], &self.galleries[cj]);
+                let eff_thr = merge_threshold + 0.05;
+                if d < eff_thr {
+                    merged_into.insert(cj, cur);
+                }
+            }
+        }
+        if merged_into.is_empty() { return; }
+        // 用并查集重置 face_id: 旧 id -> root
+        let mut id_map: Vec<usize> = (0..track_count).collect();
+        for (&old, &new) in &merged_into {
+            // 路径压缩
+            let mut root_old = old;
+            while id_map[root_old] != root_old { root_old = id_map[root_old]; }
+            let mut root_new = new;
+            while id_map[root_new] != root_new { root_new = id_map[root_new]; }
+            // 合并: 小 id 作为 root
+            let winner = root_old.min(root_new);
+            let loser = root_old.max(root_new);
+            id_map[loser] = winner;
+        }
+        // 压缩: 把同组的 tracks 合并
+        let mut new_tracks: Vec<FaceTrack> = Vec::new();
+        let mut new_galleries: Vec<Vec<f64>> = Vec::new();
+        let mut root_to_new: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (old, &mapped) in id_map.iter().enumerate() {
+            let mut root = mapped;
+            while id_map[root] != root {
+                root = id_map[root];
+            }
+            if let Some(&new_id) = root_to_new.get(&root) {
+                let new_track = &mut new_tracks[new_id];
+                let old_track = if let Some(t) = self.tracks.get(old) {
+                    t
+                } else { continue; };
+                new_track.first_ts = new_track.first_ts.min(old_track.first_ts);
+                new_track.last_ts = new_track.last_ts.max(old_track.last_ts);
+                new_track.frame_count += old_track.frame_count;
+                new_track.frames.extend_from_slice(&old_track.frames);
+            } else {
+                let new_id = new_tracks.len();
+                root_to_new.insert(root, new_id);
+                let mut track = self.tracks[old].clone();
+                track.id = new_id as u32;
+                new_tracks.push(track);
+                if old < self.galleries.len() {
+                    new_galleries.push(self.galleries[old].clone());
+                }
+            }
+        }
+        // 按 timestamp_secs 重新排序帧 (用 total_cmp 避免 f64 Ord 限制)
+        for t in &mut new_tracks {
+            t.frames.sort_by(|a, b| a.timestamp_secs.partial_cmp(&b.timestamp_secs).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        self.tracks = new_tracks;
+        self.galleries = new_galleries;
+    }
+
     /// 写出 JSON 报告 (手写, 零依赖)
     pub fn write_report(&self, path: &Path) -> Result<(), std::io::Error> {
         let mut s = String::new();
