@@ -151,6 +151,26 @@ rs-face train --dataset ./faces --out model.bin --algorithm fisherfaces
 rs-face recognize --model model.bin --input new.jpg
 ```
 
+### H. 在公开人脸库上跑识别 / 验证基准
+
+```bash
+# 1. 下载数据集
+./scripts/download_datasets.sh orl    # AT&T/ORL 4.5MB
+# 可选: yale / lfw (RS_FACE_DOWNLOAD_LFW=1)
+
+# 2. 跑基准 (5 折交叉验证 + LFW 风格同/异人对验证)
+rs-face benchmark --dataset ./datasets \
+  --algorithm eigenfaces --folds 5 --mode both \
+  --out ./BENCH_RECOGNITION.md
+```
+
+在 AT&T/ORL (40 人全集, 5 折 CV) 上, 零依赖纯 CPU 实现的客观精度:
+- **LBPH** Top-1 **98.00%**, AUC 0.91
+- **Eigenfaces (PCA)** Top-1 94.00%, AUC 0.93
+- **Fisherfaces (PCA+LDA)** Top-1 91.25%, AUC 0.92
+
+详细报告见 [`docs/BENCH_RECOGNITION.md`](docs/BENCH_RECOGNITION.md)。
+
 ---
 
 ## 📊 输出格式
@@ -234,6 +254,16 @@ recognize 参数:
   --threshold <f>     覆盖模型内置距离阈值
   --size WxH          模型对应尺寸 [默认: 92x112]
   --cascade <path>    先做人脸检测再识别
+
+benchmark 参数:
+  --dataset <dir>     数据集目录 (<class>/<file>.pgm)
+  --out <file>        输出 Markdown 报告 [默认: ./BENCH_RECOGNITION.local.md]
+  --mode <m>          identification|verification|both [默认: both]
+  --algorithm <a>     eigenfaces|fisherfaces|lbph [默认: eigenfaces]
+  --folds <k>         K 折交叉验证 [默认: 5]
+  --max-pairs <n>     验证任务最大配对数 [默认: 2000]
+  --seed <n>          RNG 种子 [默认: 42]
+  --size WxH          训练/识别图像尺寸 [默认: 92x112]
 ```
 
 ### 调参建议

@@ -6,6 +6,7 @@ pub enum Command {
     Detect(DetectOpts),
     Train(TrainOpts),
     Recognize(RecognizeOpts),
+    Benchmark(BenchmarkOpts),
     Info,
     Help,
 }
@@ -84,6 +85,18 @@ pub struct RecognizeOpts {
     pub cascade_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BenchmarkOpts {
+    pub dataset: PathBuf,
+    pub out: Option<PathBuf>,
+    pub mode: String,            // identification | verification | both
+    pub algorithm: String,       // eigenfaces | fisherfaces | lbph
+    pub folds: usize,
+    pub max_pairs: usize,
+    pub seed: u64,
+    pub size: (usize, usize),
+}
+
 impl Default for DetectOpts {
     fn default() -> Self {
         Self {
@@ -125,13 +138,14 @@ pub fn parse() -> Result<Command, BoxError> {
         "detect" => parse_detect(&args[1..]),
         "train" => parse_train(&args[1..]),
         "recognize" | "rec" => parse_recognize(&args[1..]),
+        "benchmark" | "bench" => parse_benchmark(&args[1..]),
         "info" => Ok(Command::Info),
         "--help" | "-h" | "help" => {
             print_help();
             Ok(Command::Help)
         }
         s if s.starts_with('-') => parse_detect(&args[..]),
-        s => Err(format!("未知子命令: {} (可用: detect, train, recognize, info)", s).into()),
+        s => Err(format!("未知子命令: {} (可用: detect, train, recognize, benchmark, info)", s).into()),
     }
 }
 
@@ -252,6 +266,52 @@ fn parse_recognize(args: &[String]) -> Result<Command, BoxError> {
     }))
 }
 
+fn parse_benchmark(args: &[String]) -> Result<Command, BoxError> {
+    let mut dataset = PathBuf::new();
+    let mut out: Option<PathBuf> = None;
+    let mut mode = "both".to_string();
+    let mut algorithm = "eigenfaces".to_string();
+    let mut folds: usize = 5;
+    let mut max_pairs: usize = 2000;
+    let mut seed: u64 = 42;
+    let mut size_w: usize = 92;
+    let mut size_h: usize = 112;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--dataset" | "-d" => { dataset = take_path(args, &mut i)?; }
+            "--out" | "-o" => { out = Some(take_path(args, &mut i)?); }
+            "--mode" => { mode = take_str(args, &mut i)?; }
+            "--algorithm" | "-a" => { algorithm = take_str(args, &mut i)?; }
+            "--folds" | "-k" => { folds = take_str(args, &mut i)?.parse()?; }
+            "--max-pairs" => { max_pairs = take_str(args, &mut i)?.parse()?; }
+            "--seed" => { seed = take_str(args, &mut i)?.parse()?; }
+            "--size" => {
+                let s = take_str(args, &mut i)?;
+                let parts: Vec<&str> = s.split('x').collect();
+                if parts.len() == 2 {
+                    size_w = parts[0].parse()?;
+                    size_h = parts[1].parse()?;
+                }
+            }
+            "--help" | "-h" => { print_help(); return Ok(Command::Help); }
+            other => return Err(format!("未知 benchmark 参数: {}", other).into()),
+        }
+        i += 1;
+    }
+    if dataset.as_os_str().is_empty() { return Err("benchmark 必须指定 --dataset".into()); }
+    Ok(Command::Benchmark(BenchmarkOpts {
+        dataset,
+        out,
+        mode,
+        algorithm,
+        folds,
+        max_pairs,
+        seed,
+        size: (size_w, size_h),
+    }))
+}
+
 fn take_path(args: &[String], i: &mut usize) -> Result<PathBuf, BoxError> {
     if *i + 1 >= args.len() { return Err(format!("参数 {} 需要路径值", args[*i]).into()); }
     *i += 1;
@@ -277,6 +337,7 @@ pub fn print_help() {
     println!("  detect     对视频/图片做人脸检测，输出人脸帧和裁剪图");
     println!("  train      用数据集训练人脸识别模型");
     println!("  recognize  用已有模型识别图片中的人脸");
+    println!("  benchmark  在公开人脸库上跑识别/验证基准 (ORL/Yale/LFW)");
     println!("  info       显示系统信息");
     println!();
     println!("detect 参数:");
@@ -314,6 +375,16 @@ pub fn print_help() {
     println!("  --threshold <f>     覆盖模型内置距离阈值");
     println!("  --size WxH          模型对应尺寸 [默认: 92x112]");
     println!("  --cascade <path>    先做人脸检测再识别");
+    println!();
+    println!("benchmark 参数:");
+    println!("  --dataset <dir>     数据集目录 (<class>/<file>.pgm)");
+    println!("  --out <file>        输出 Markdown 报告 [默认: ./BENCH_RECOGNITION.local.md]");
+    println!("  --mode <m>          identification|verification|both [默认: both]");
+    println!("  --algorithm <a>     eigenfaces|fisherfaces|lbph [默认: eigenfaces]");
+    println!("  --folds <k>         K 折交叉验证 [默认: 5]");
+    println!("  --max-pairs <n>     验证任务最大配对数 [默认: 2000]");
+    println!("  --seed <n>          RNG 种子 [默认: 42]");
+    println!("  --size WxH          训练/识别图像尺寸 [默认: 92x112]");
     println!();
     println!("示例:");
     println!("  检测视频:  rs-face detect --url <URL> --output ./out --fps 1 --save-crops");

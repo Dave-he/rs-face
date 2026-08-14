@@ -11,10 +11,31 @@ Cargo.lock.bak
 /tmp_*
 *.pgm
 !data/*.pgm
+!datasets/**/*.pgm
 *.ppm
 *.png
 *.jpg
 *.jpeg
+!data/**/*.jpg
+*.gif
+
+# Downloaded datasets (large; download via scripts/download_datasets.sh)
+/datasets/s*
+/datasets/att_faces/
+/datasets/yalefaces/
+/datasets/lfw/
+/datasets/*/*.pgm
+/datasets/*/*/*.pgm
+/datasets/*/*/*/*.pgm
+
+# Trained models
+*.bin
+/face_model.bin
+/bench_models/
+
+# Benchmark outputs
+/bench_out/
+BENCH_RECOGNITION.local.md
 
 # Editor / OS
 .DS_Store

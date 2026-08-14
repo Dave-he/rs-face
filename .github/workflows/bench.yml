@@ -1,0 +1,72 @@
+name: bench-recognition
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'src/benchmark.rs'
+      - 'src/faces.rs'
+      - 'src/recognition.rs'
+      - 'src/align.rs'
+      - 'src/args.rs'
+      - 'src/main.rs'
+      - 'scripts/download_datasets.sh'
+      - 'tests/benchmark_recognition.rs'
+      - 'docs/BENCH_RECOGNITION.md'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+      - name: Build
+        run: cargo build --release
+      - name: Download AT&T/ORL dataset
+        run: |
+          chmod +x ./scripts/download_datasets.sh
+          ./scripts/download_datasets.sh orl
+          ls datasets/ | head -5
+          find datasets -name '*.pgm' | wc -l
+      - name: Smoke test benchmark CLI
+        run: |
+          ./target/release/rs-face benchmark --help | head -20
+      - name: Run identification benchmark (Eigenfaces)
+        run: |
+          ./target/release/rs-face benchmark \
+            --dataset ./datasets --algorithm eigenfaces \
+            --folds 5 --mode both \
+            --out ./BENCH_ORL_EIGEN.md
+          echo '---' && cat ./BENCH_ORL_EIGEN.md
+      - name: Run identification benchmark (LBPH)
+        run: |
+          ./target/release/rs-face benchmark \
+            --dataset ./datasets --algorithm lbph \
+            --folds 5 --mode both \
+            --out ./BENCH_ORL_LBPH.md
+          echo '---' && cat ./BENCH_ORL_LBPH.md
+      - name: Run identification benchmark (Fisherfaces)
+        run: |
+          ./target/release/rs-face benchmark \
+            --dataset ./datasets --algorithm fisherfaces \
+            --folds 5 --mode both \
+            --out ./BENCH_ORL_FISHER.md
+          echo '---' && cat ./BENCH_ORL_FISHER.md
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-reports
+          path: |
+            BENCH_ORL_*.md
+            datasets/

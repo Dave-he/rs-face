@@ -1,5 +1,6 @@
 mod align;
 mod args;
+mod benchmark;
 mod cascade;
 mod detector;
 mod faces;
@@ -83,6 +84,7 @@ fn run(cmd: args::Command) -> Result<(), BoxError> {
         args::Command::Detect(o) => cmd_detect(o, started)?,
         args::Command::Train(o) => cmd_train(o, started)?,
         args::Command::Recognize(o) => cmd_recognize(o, started)?,
+        args::Command::Benchmark(o) => cmd_benchmark(o, started)?,
         args::Command::Info => cmd_info(),
         args::Command::Help => {}
     }
@@ -465,6 +467,78 @@ fn cmd_recognize(o: args::RecognizeOpts, started: Instant) -> Result<(), BoxErro
         println!("[recognize] 标注图: {}", out_path.display());
     }
     println!("[recognize] 用时: {:.2}s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+fn cmd_benchmark(o: args::BenchmarkOpts, started: Instant) -> Result<(), BoxError> {
+    println!("[benchmark] 数据集: {}", o.dataset.display());
+    let mode = benchmark::Mode::from_str(&o.mode)?;
+    let algorithm = benchmark::Algorithm::from_str(&o.algorithm)?;
+    let opts = benchmark::Options {
+        mode,
+        algorithm,
+        folds: o.folds,
+        max_pairs: o.max_pairs,
+        seed: o.seed,
+        size: o.size,
+        train_per_fold: 0,
+    };
+    println!("[benchmark] 算法: {:?}  模式: {:?}  折数: {}  配对上限: {}",
+        algorithm, mode, o.folds, o.max_pairs);
+    let dataset = benchmark::load_dataset(&o.dataset, o.size)?;
+    let dataset_name = o.dataset.file_name()
+        .and_then(|s| s.to_str()).unwrap_or("dataset").to_string();
+    println!("[benchmark] 加载: {} 张 ({} 类), 平均每类 {:.1} 张",
+        dataset.vectors.len(),
+        dataset.names.len(),
+        dataset.vectors.len() as f64 / dataset.names.len().max(1) as f64);
+
+    let id_report = if matches!(mode, benchmark::Mode::Identification | benchmark::Mode::Both) {
+        if dataset.names.len() < 2 {
+            println!("[benchmark] 跳过 identification: 类别数 < 2");
+            None
+        } else {
+            let mut r = benchmark::run_identification(&dataset, &opts)?;
+            r.dataset = dataset_name.clone();
+            Some(r)
+        }
+    } else { None };
+
+    let ver_report = if matches!(mode, benchmark::Mode::Verification | benchmark::Mode::Both) {
+        if dataset.vectors.len() < 2 {
+            println!("[benchmark] 跳过 verification: 样本数 < 2");
+            None
+        } else {
+            let mut r = benchmark::run_verification(&dataset, &opts)?;
+            r.dataset = dataset_name.clone();
+            Some(r)
+        }
+    } else { None };
+
+    if let Some(id) = &id_report {
+        println!(
+            "[benchmark] identification: top-1={:.2}%  top-5={:.2}%  ({} folds)",
+            id.top1 * 100.0, id.top5 * 100.0, id.folds
+        );
+    }
+    if let Some(ver) = &ver_report {
+        println!(
+            "[benchmark] verification: AUC={:.4}  EER={:.4}  best_acc={:.2}%  ({} pairs)",
+            ver.auc, ver.eer, ver.best_accuracy * 100.0, ver.n_pairs
+        );
+    }
+
+    let out_path = o.out.clone().unwrap_or_else(|| {
+        std::path::PathBuf::from("./BENCH_RECOGNITION.local.md")
+    });
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    benchmark::write_markdown(&out_path, id_report.as_ref(), ver_report.as_ref(), &dataset_name, &o.dataset)?;
+    println!("[benchmark] 报告: {}", out_path.display());
+    println!("[benchmark] 用时: {:.2}s", started.elapsed().as_secs_f64());
     Ok(())
 }
 
