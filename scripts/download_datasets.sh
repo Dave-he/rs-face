@@ -36,7 +36,10 @@ download_orl() {
 # ---------- Yale Face Database A ----------
 # 15 subjects × 11 images = 165 GIF (320×243), 6.4MB
 # License: research use, courtesy Yale Vision Lab
-YALE_URL="http://vision.ucsd.edu/datasets/yale_face_dataset_original/yalefaces.zip"
+# 注: 官方 http://vision.ucsd.edu/content/yale-face-database 已 404,
+#     公开镜像 (GitHub/HF) 不可靠, 暂不内置自动下载。
+#     想用 Yale 可手动从其他仓库下载 zip, 放入 datasets/yalefaces/。
+YALE_URL=""
 
 download_yale() {
     local dst="$DATASETS_ROOT/yalefaces"
@@ -142,9 +145,9 @@ usage() {
     cat <<EOF
 用法: $0 [orl|yale|lfw|all]
   orl   下载 AT&T/ORL (4.5MB, PGM, 主推)
-  yale  下载 Yale Face Database A (6.4MB, GIF)
+  yale  (官方 URL 404, 暂禁用) — 手动下载到 datasets/yalefaces/
   lfw   下载 LFW (250MB, 可选, RS_FACE_DOWNLOAD_LFW=1)
-  all   下载 orl + yale (+ lfw 若 RS_FACE_DOWNLOAD_LFW=1)
+  all   下载 orl (+ lfw 若 RS_FACE_DOWNLOAD_LFW=1)
   默认: all
 
 环境变量:
@@ -161,9 +164,9 @@ main() {
     local target="${1:-all}"
     case "$target" in
         orl)  download_orl ;;
-        yale) download_yale ;;
+        yale) echo "[yale] 官方 URL 已废弃, 跳过下载。手动从镜像获取 yalefaces.zip 放入 datasets/yalefaces/" ;;
         lfw)  download_lfw ;;
-        all)  download_orl; download_yale; download_lfw ;;
+        all)  download_orl; download_lfw ;;
         -h|--help|help) usage ;;
         *) echo "未知目标: $target" >&2; usage; exit 1 ;;
     esac
