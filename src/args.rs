@@ -46,6 +46,8 @@ pub struct DetectOpts {
     pub align_crops: bool,
     /// 清晰度过滤阈值 (Laplacian 方差, 低于此值视为模糊, 跳过)。0 表示不过滤。默认 0。
     pub quality_filter: f64,
+    /// 跨视频人脸合并: 加载先前 run 的 tracks.json 作为画廊, 把同人脸合并到旧 face_id。
+    pub prior_tracks: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +126,7 @@ impl Default for DetectOpts {
             key_frames_only: false,
             align_crops: false,
             quality_filter: 0.0,
+            prior_tracks: None,
         }
     }
 }
@@ -178,6 +181,7 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--key-frames-only" => { opts.key_frames_only = true; }
             "--align-crops" => { opts.align_crops = true; }
             "--quality-filter" => { opts.quality_filter = take_str(args, &mut i)?.parse()?; }
+            "--prior-tracks" => { opts.prior_tracks = Some(take_path(args, &mut i)?); }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }

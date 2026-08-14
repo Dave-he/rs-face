@@ -346,6 +346,20 @@ pub fn detect_in_directory(
     // 跟踪: 把已有的 face_ids 写到 tracks.json + report.html
     if track_enabled && !all_det.is_empty() {
         if let Some(ref mut t) = tracker {
+            // 跨视频合并: 加载先前 tracks.json
+            if let Some(ref prior_path) = opts.prior_tracks {
+                if prior_path.exists() {
+                    let n_before = t.num_tracks();
+                    if let Err(e) = t.load_and_merge_from_json(prior_path, track_threshold + 0.05) {
+                        eprintln!("[detect] 跨视频合并失败: {}", e);
+                    } else {
+                        let n_after = t.num_tracks();
+                        if n_before != n_after {
+                            println!("[detect] 跨视频合并: {} + prior → {}", n_before, n_after);
+                        }
+                    }
+                }
+            }
             let n_before = t.num_tracks();
             t.merge_similar_tracks(track_threshold);
             let n_after = t.num_tracks();

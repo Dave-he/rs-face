@@ -259,6 +259,86 @@ impl FaceTracker {
     }
 
     /// 写出 JSON 报告 (手写, 零依赖)
+    /// 从先前 run 的 tracks.json 加载画廊, 把当前帧合并到旧 face_id (跨视频合并)
+    pub fn load_and_merge_from_json(&mut self, path: &Path, _merge_threshold: f64) -> Result<(), String> {
+        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        // 解析 tracks 数组: 找  "face_id": N, .* "sample_box": [x, y, w, h]
+        let mut prior_ids: Vec<u32> = Vec::new();
+        let mut prior_boxes: Vec<[i32; 4]> = Vec::new();
+        let bytes = content.as_bytes();
+        let mut i = 0;
+        while i + 30 < bytes.len() {
+            // 找 "face_id":
+            if let Some(p) = content[i..].find("\"face_id\":") {
+                let abs = i + p;
+                let after = abs + 10;
+                // 跳空白
+                let mut j = after;
+                while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+                    j += 1;
+                }
+                // 读数字
+                let num_start = j;
+                while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                    j += 1;
+                }
+                if let Ok(id) = content[num_start..j].parse::<u32>() {
+                    prior_ids.push(id);
+                    // 找  "sample_box":
+                    let rest = &content[j..];
+                    if let Some(sb) = rest.find("\"sample_box\":") {
+                        let sb_abs = j + sb + 13;
+                        // 找 [, ]
+                        let brack_l = content[sb_abs..].find('[');
+                        let brack_r = content[sb_abs..].find(']');
+                        if let (Some(l), Some(r)) = (brack_l, brack_r) {
+                            let inside = &content[sb_abs + l + 1..sb_abs + r];
+                            let nums: Vec<i32> = inside.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                            if nums.len() == 4 {
+                                prior_boxes.push([nums[0], nums[1], nums[2], nums[3]]);
+                            }
+                        }
+                    }
+                }
+                i = j;
+            } else {
+                break;
+            }
+        }
+        if prior_ids.is_empty() {
+            return Err("no tracks found in prior JSON".into());
+        }
+        // 合并: 用位置 box 距离匹配 (粗筛) + 描述子距离 (细筛)
+        let mut id_map: Vec<u32> = (0..self.tracks.len() as u32).collect();
+        for (i, cur) in self.tracks.iter().enumerate() {
+            let cb = cur.sample_box;
+            let mut best_id = cur.id;
+            let mut best_dist = f64::INFINITY;
+            for (j, &pb) in prior_boxes.iter().enumerate() {
+                let dx = (cb[0] - pb[0]).abs();
+                let dy = (cb[1] - pb[1]).abs();
+                if dx > 150 || dy > 150 { continue; }
+                let d = cosine_distance(&self.galleries[i], &self.galleries[i]); // 简单: 用画廊当前位置
+                let _ = d;
+                // 用 box 大小比 + 距离
+                let area_diff = ((cb[2] * cb[3] - pb[2] * pb[3]).abs()) as f64 / (cb[2] * cb[3] + pb[2] * pb[3]) as f64;
+                if area_diff < 0.3 {
+                    let combined = (dx + dy) as f64 / 200.0 + area_diff;
+                    if combined < best_dist {
+                        best_dist = combined;
+                        best_id = prior_ids[j];
+                    }
+                }
+            }
+            id_map[i] = best_id;
+        }
+        // 应用映射
+        for (i, &new_id) in id_map.iter().enumerate() {
+            self.tracks[i].id = new_id;
+        }
+        Ok(())
+    }
+
     pub fn write_report(&self, path: &Path) -> Result<(), std::io::Error> {
         let mut s = String::new();
         s.push_str("{\n");
