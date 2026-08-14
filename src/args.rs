@@ -39,6 +39,8 @@ pub struct DetectOpts {
     pub track: bool,
     /// 人脸聚类阈值 (卡方距离, 越小越严格)。默认 0.5。
     pub track_threshold: f64,
+    /// 仅输出每个 track 的代表帧 (1 张/人脸), 节省 90% 空间。需要 --track。
+    pub key_frames_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +104,7 @@ impl Default for DetectOpts {
             dedup_iou: 0.0,
             track: false,
             track_threshold: 0.3,
+            key_frames_only: false,
         }
     }
 }
@@ -152,6 +155,7 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--dedup-iou" => { opts.dedup_iou = take_str(args, &mut i)?.parse()?; }
             "--track" => { opts.track = true; }
             "--track-threshold" => { opts.track_threshold = take_str(args, &mut i)?.parse()?; }
+            "--key-frames-only" => { opts.key_frames_only = true; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }

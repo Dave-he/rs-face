@@ -9,6 +9,10 @@ pub struct FaceRecord {
     pub file_name: String,
     pub face_count: u32,
     pub boxes: Vec<[i32; 4]>,
+    /// 跟踪 face_id (None 表示未启用 --track)
+    pub face_ids: Vec<u32>,
+    /// 是否为该 face_id 的代表帧 (在 --key-frames-only 模式下)
+    pub is_keyframe: bool,
 }
 
 pub fn parse_frame_timestamp(path: &Path) -> (f64, u64) {
@@ -52,6 +56,7 @@ pub fn save_frame_with_faces(
     timestamp_secs: f64,
     frame_index: u64,
     faces: &[Rect],
+    face_ids: &[u32],
     save_crops: bool,
     padding_ratio: f32,
 ) -> Result<FaceRecord, BoxError> {
@@ -89,6 +94,8 @@ pub fn save_frame_with_faces(
         file_name,
         face_count: faces.len() as u32,
         boxes,
+        face_ids: face_ids.to_vec(),
+        is_keyframe: false,
     })
 }
 

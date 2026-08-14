@@ -116,6 +116,7 @@ pub fn detect_in_directory(
         hog_svm: None,
         hog_threshold: 0.0,
     };
+    let _ = det_opts; // suppress unused if DetectionOpts fields change
     // 步长自适应: 默认 step=2 太密, 1440x1080 帧上窗口数爆炸。改为 4 提速 ~4x, 召回下降 < 5%。
     // 用户显式传入 --step 时保留其值。
     if det_opts.step == 2 {
@@ -170,6 +171,7 @@ pub fn detect_in_directory(
     let dedup_iou = opts.dedup_iou;
     let track_enabled = opts.track;
     let track_threshold = opts.track_threshold;
+    let key_frames_only = opts.key_frames_only && track_enabled;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -219,10 +221,48 @@ pub fn detect_in_directory(
     }
     all_det.sort_by_key(|d| d.idx);
 
+    // 准备追踪器 (可选) + 计算每帧的脸 ID
+    let mut tracker = if track_enabled && !all_det.is_empty() {
+        Some(tracker::FaceTracker::new(track_threshold))
+    } else {
+        None
+    };
+    let mut face_ids_per_det: Vec<Vec<u32>> = Vec::with_capacity(all_det.len());
+    for det in all_det.iter() {
+        let mut ids = Vec::with_capacity(det.faces.len());
+        if let Some(ref mut t) = tracker {
+            for f in &det.faces {
+                let id = t.register(&det.img, f, det.idx, det.ts_secs);
+                ids.push(id);
+            }
+        }
+        face_ids_per_det.push(ids);
+    }
+
+    // 关键帧模式: 每个 track 只保留一张最大的脸, 后续帧跳过
+    // 记录每个 track 中"最大脸框"的 (det_idx, face_idx) 索引
+    let mut keyframe_picks: std::collections::HashMap<u32, (usize, usize)> = std::collections::HashMap::new();
+    if key_frames_only && !all_det.is_empty() {
+        for (i, (det, ids)) in all_det.iter().zip(face_ids_per_det.iter()).enumerate() {
+            for (j, (f, &id)) in det.faces.iter().zip(ids.iter()).enumerate() {
+                let area = (f.w * f.h) as u32;
+                let entry = keyframe_picks.entry(id).or_insert((i, j));
+                let prev_area = {
+                    let (pi, pj) = *entry;
+                    let pf = &all_det[pi].faces[pj];
+                    (pf.w * pf.h) as u32
+                };
+                if area > prev_area {
+                    *entry = (i, j);
+                }
+            }
+        }
+    }
+
     // 帧去重: 相邻帧若所有人脸 IoU > dedup_iou 且人脸数相同, 视为重复, 不写出。
     let mut prev_boxes: Option<Vec<[i32; 4]>> = None;
     let mut written = 0u64;
-    for det in all_det.iter() {
+    for (det_idx, (det, face_ids)) in all_det.iter().zip(face_ids_per_det.iter()).enumerate() {
         let cur_boxes: Vec<[i32; 4]> = det.faces.iter().map(|r| [r.x, r.y, r.w, r.h]).collect();
         let is_dup = match &prev_boxes {
             Some(prev) if dedup_iou > 0.0 && prev.len() == cur_boxes.len() => {
@@ -236,6 +276,17 @@ pub fn detect_in_directory(
             prev_boxes = Some(cur_boxes);
             continue;
         }
+        // 关键帧模式: 只在是代表帧时写出
+        if key_frames_only {
+            let is_key = face_ids.iter().any(|&id| {
+                keyframe_picks.get(&id).copied() == Some((det_idx, face_ids.iter().position(|&x| x == id).unwrap()))
+            });
+            if !is_key {
+                stats.frames_with_faces += 1;
+                prev_boxes = Some(cur_boxes);
+                continue;
+            }
+        }
         let rec = crate::saver::save_frame_with_faces(
             &det.img,
             &output_dir,
@@ -243,6 +294,7 @@ pub fn detect_in_directory(
             det.ts_secs,
             det.frame_idx,
             &det.faces,
+            face_ids,
             save_crops,
             padding_ratio,
         )?;
@@ -257,26 +309,28 @@ pub fn detect_in_directory(
         println!("[detect] 去重: 写出 {} 张, 跳过去重 {} 张", written,
             stats.frames_with_faces.saturating_sub(written));
     }
-    // 跟踪: 用 LBPH 聚类同一人脸, 输出 tracks.json + report.html
+    // 跟踪: 把已有的 face_ids 写到 tracks.json + report.html
     if track_enabled && !all_det.is_empty() {
-        match track_and_save(&mut all_det, output_dir.as_path(), track_threshold) {
-            Ok(tracks) => {
-                let report = report_html::HtmlReport {
-                    video_path: frames_dir,
-                    fps: 1.0,
-                    records: &stats.records,
-                    tracks: if tracks.is_empty() { None } else { Some(&tracks) },
-                    cover_thumb: None,
-                };
-                let html_path = output_dir.join("report.html");
-                let _ = report_html::write(&report, &html_path);
-                println!("[detect] HTML 报告: {}", html_path.display());
-            }
-            Err(e) => eprintln!("[detect] 跟踪失败: {}", e),
+        if let Some(ref t) = tracker {
+            let tracks = t.tracks().to_vec();
+            let report_path = output_dir.join("tracks.json");
+            let _ = t.write_report(&report_path);
+            println!("[detect] 跟踪: {} 张不同人脸 → {}", tracks.len(), report_path.display());
+            let report = report_html::HtmlReport {
+                video_path: frames_dir,
+                fps: 1.0,
+                records: &stats.records,
+                tracks: if tracks.is_empty() { None } else { Some(&tracks) },
+                cover_thumb: None,
+            };
+            let html_path = output_dir.join("report.html");
+            let _ = report_html::write(&report, &html_path);
+            println!("[detect] HTML 报告: {}", html_path.display());
         }
     }
     Ok(stats)
 }
+
 
 /// IoU (Intersection over Union) of two axis-aligned bounding boxes.
 fn iou(a: [i32; 4], b: [i32; 4]) -> f32 {

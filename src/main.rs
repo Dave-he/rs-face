@@ -40,6 +40,8 @@ pub struct DetectorOpts {
     pub track: bool,
     /// 人脸聚类卡方距离阈值。
     pub track_threshold: f64,
+    /// 仅输出每个 track 的代表帧 (需要 --track), 节省 90% 空间。
+    pub key_frames_only: bool,
 }
 
 fn main() -> ExitCode {
@@ -215,6 +217,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 dedup_iou: o.dedup_iou,
                 track: o.track,
                 track_threshold: o.track_threshold,
+                key_frames_only: o.key_frames_only,
             },
         )?;
         println!(
@@ -259,6 +262,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             dedup_iou: o.dedup_iou,
             track: o.track,
             track_threshold: o.track_threshold,
+            key_frames_only: o.key_frames_only,
         },
     )?;
     println!(
@@ -305,6 +309,7 @@ fn cmd_detect_image(o: args::DetectOpts, img_path: &Path, started: Instant) -> R
         0.0,
         1,
         &faces,
+        &[],
         o.save_crops,
         o.padding_ratio,
     )?;
@@ -463,7 +468,7 @@ fn write_manifest<'a, I: IntoIterator<Item = &'a saver::FaceRecord>>(
     writeln!(f, "# rs-face manifest")?;
     writeln!(
         f,
-        "# format: index<TAB>timestamp_secs<TAB>frame_index<TAB>file_name<TAB>faces<TAB>x,y,w,h;..."
+        "# format: index<TAB>timestamp_secs<TAB>frame_index<TAB>file_name<TAB>faces<TAB>face_ids<TAB>x,y,w,h;..."
     )?;
     for r in records {
         let boxes = r
@@ -472,10 +477,15 @@ fn write_manifest<'a, I: IntoIterator<Item = &'a saver::FaceRecord>>(
             .map(|[x, y, w, h]| format!("{},{},{},{}", x, y, w, h))
             .collect::<Vec<_>>()
             .join(";");
+        let face_ids = if r.face_ids.is_empty() {
+            "-".to_string()
+        } else {
+            r.face_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+        };
         writeln!(
             f,
-            "{}\t{:.3}\t{}\t{}\t{}\t{}",
-            r.index, r.timestamp_secs, r.frame_index, r.file_name, r.face_count, boxes
+            "{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
+            r.index, r.timestamp_secs, r.frame_index, r.file_name, r.face_count, face_ids, boxes
         )?;
     }
     Ok(())
