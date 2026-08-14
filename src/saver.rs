@@ -67,7 +67,11 @@ pub fn save_frame_with_faces(
     let file_name = format!("{:04}_{}.png", index, ts);
     let full_path = out_dir.join(&file_name);
     let mut annotated = img.clone();
-    draw_rects(&mut annotated, faces);
+    if !face_ids.is_empty() {
+        draw_rects_palette(&mut annotated, faces, face_ids);
+    } else {
+        draw_rects(&mut annotated, faces);
+    }
     annotated.save_png(&full_path)?;
     let mut boxes = Vec::new();
     let mut crops_dir: Option<PathBuf> = None;
@@ -108,24 +112,52 @@ pub fn save_frame_with_faces(
 }
 
 fn draw_rects(img: &mut Image, rects: &[Rect]) {
-    for r in rects {
-        let color = if img.channels >= 3 {
-            vec![255u8, 0u8, 0u8]
+    draw_rects_color(img, rects, &[255u8])
+}
+
+/// 彩色边框绘制 — 每个 rect 一种颜色 (从 palette 取)
+pub fn draw_rects_palette(img: &mut Image, rects: &[Rect], face_ids: &[u32]) {
+    let palette: [(u8, u8, u8); 7] = [
+        (255, 80, 80),   // 红
+        (80, 220, 80),   // 绿
+        (80, 150, 255),  // 蓝
+        (255, 220, 80),  // 黄
+        (220, 80, 255),  // 紫
+        (80, 230, 230),  // 青
+        (255, 160, 80),  // 橙
+    ];
+    for (i, r) in rects.iter().enumerate() {
+        let id = face_ids.get(i).copied().unwrap_or(0);
+        let (pr, pg, pb) = palette[(id as usize) % palette.len()];
+        if img.channels >= 3 {
+            let color = vec![pr, pg, pb];
+            draw_single_rect(img, r, &color);
         } else {
-            vec![255u8]
-        };
-        let x0 = r.x.max(0) as usize;
-        let y0 = r.y.max(0) as usize;
-        let x1 = (r.x + r.w).min(img.width as i32 - 1) as usize;
-        let y1 = (r.y + r.h).min(img.height as i32 - 1) as usize;
-        for x in x0..=x1 {
-            set_pixel(img, x, y0, &color);
-            set_pixel(img, x, y1, &color);
+            // 灰度: 取亮度最高的颜色
+            let lum = ((pr as u32 + pg as u32 + pb as u32) / 3) as u8;
+            draw_single_rect(img, r, &[lum]);
         }
-        for y in y0..=y1 {
-            set_pixel(img, x0, y, &color);
-            set_pixel(img, x1, y, &color);
-        }
+    }
+}
+
+fn draw_single_rect(img: &mut Image, r: &Rect, color: &[u8]) {
+    let x0 = r.x.max(0) as usize;
+    let y0 = r.y.max(0) as usize;
+    let x1 = (r.x + r.w).min(img.width as i32 - 1) as usize;
+    let y1 = (r.y + r.h).min(img.height as i32 - 1) as usize;
+    for x in x0..=x1 {
+        set_pixel(img, x, y0, color);
+        set_pixel(img, x, y1, color);
+    }
+    for y in y0..=y1 {
+        set_pixel(img, x0, y, color);
+        set_pixel(img, x1, y, color);
+    }
+}
+
+fn draw_rects_color(img: &mut Image, rects: &[Rect], color: &[u8]) {
+    for r in rects {
+        draw_single_rect(img, r, color);
     }
 }
 

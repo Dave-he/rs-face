@@ -173,6 +173,7 @@ pub fn detect_in_directory(
     let track_threshold = opts.track_threshold;
     let key_frames_only = opts.key_frames_only && track_enabled;
     let align_crops = opts.align_crops;
+    let quality_filter = opts.quality_filter;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -283,6 +284,37 @@ pub fn detect_in_directory(
                 keyframe_picks.get(&id).copied() == Some((det_idx, face_ids.iter().position(|&x| x == id).unwrap()))
             });
             if !is_key {
+                stats.frames_with_faces += 1;
+                prev_boxes = Some(cur_boxes);
+                continue;
+            }
+        }
+        // 清晰度过滤: 所有人脸 Laplacian 方差 < quality_filter 视为模糊, 跳过
+        if quality_filter > 0.0 {
+            let mut all_blurry = true;
+            for f in &det.faces {
+                let px = (f.w as f32 * 0.15) as i32;
+                let py = (f.h as f32 * 0.15) as i32;
+                let x = (f.x - px).max(0) as usize;
+                let y = (f.y - py).max(0) as usize;
+                let w = (f.w + 2 * px).min(det.img.width as i32 - x as i32) as usize;
+                let h = (f.h + 2 * py).min(det.img.height as i32 - y as i32) as usize;
+                if w < 3 || h < 3 { continue; }
+                let crop = det.img.crop(x, y, w, h);
+                let chans = crop.channels;
+                let mut gray = vec![0u8; w * h];
+                for j in 0..h {
+                    for i in 0..w {
+                        gray[j * w + i] = crop.data[(j * w + i) * chans];
+                    }
+                }
+                let v = crate::imgproc::laplacian_variance(&gray, w, h);
+                if v >= quality_filter {
+                    all_blurry = false;
+                    break;
+                }
+            }
+            if all_blurry && !det.faces.is_empty() {
                 stats.frames_with_faces += 1;
                 prev_boxes = Some(cur_boxes);
                 continue;

@@ -44,6 +44,8 @@ pub struct DetectorOpts {
     pub key_frames_only: bool,
     /// 裁剪并对齐人脸后再保存 (--save-crops 时生效)。
     pub align_crops: bool,
+    /// 清晰度过滤阈值 (Laplacian 方差, 0=不过滤)。
+    pub quality_filter: f64,
 }
 
 fn main() -> ExitCode {
@@ -221,6 +223,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 track_threshold: o.track_threshold,
                 key_frames_only: o.key_frames_only,
                 align_crops: o.align_crops,
+                quality_filter: o.quality_filter,
             },
         )?;
         println!(
@@ -267,6 +270,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             track_threshold: o.track_threshold,
             key_frames_only: o.key_frames_only,
             align_crops: o.align_crops,
+            quality_filter: o.quality_filter,
         },
     )?;
     println!(

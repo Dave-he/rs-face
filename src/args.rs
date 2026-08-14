@@ -43,6 +43,8 @@ pub struct DetectOpts {
     pub key_frames_only: bool,
     /// 裁剪并对齐人脸 (固定 92x112, 双眼水平) 后再保存。需要 --save-crops。
     pub align_crops: bool,
+    /// 清晰度过滤阈值 (Laplacian 方差, 低于此值视为模糊, 跳过)。0 表示不过滤。默认 0。
+    pub quality_filter: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +110,7 @@ impl Default for DetectOpts {
             track_threshold: 0.3,
             key_frames_only: false,
             align_crops: false,
+            quality_filter: 0.0,
         }
     }
 }
@@ -160,6 +163,7 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--track-threshold" => { opts.track_threshold = take_str(args, &mut i)?.parse()?; }
             "--key-frames-only" => { opts.key_frames_only = true; }
             "--align-crops" => { opts.align_crops = true; }
+            "--quality-filter" => { opts.quality_filter = take_str(args, &mut i)?.parse()?; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 detect 参数: {}", other).into()),
         }

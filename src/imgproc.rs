@@ -238,3 +238,31 @@ pub fn group_rectangles(rects: &[Rect], min_neighbors: u32) -> Vec<Rect> {
     }
     out
 }
+
+/// 计算 Laplacian 方差 (8 邻域 [-1,-1,-1; -1,8,-1; -1,-1,-1])
+/// 输入/输出均为灰度 u8 数组, 尺寸 w x h; 返回方差 (越大越清晰)
+pub fn laplacian_variance(gray: &[u8], w: usize, h: usize) -> f64 {
+    if w < 3 || h < 3 { return 0.0; }
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut n = 0u64;
+    for y in 1..(h - 1) {
+        for x in 1..(w - 1) {
+            let c = gray[y * w + x] as f64;
+            let l = gray[y * w + (x - 1)] as f64;
+            let r = gray[y * w + (x + 1)] as f64;
+            let u = gray[(y - 1) * w + x] as f64;
+            let d = gray[(y + 1) * w + x] as f64;
+            let ul = gray[(y - 1) * w + (x - 1)] as f64;
+            let ur = gray[(y - 1) * w + (x + 1)] as f64;
+            let dl = gray[(y + 1) * w + (x - 1)] as f64;
+            let dr = gray[(y + 1) * w + (x + 1)] as f64;
+            let lap = 8.0 * c - l - r - u - d - ul - ur - dl - dr;
+            sum += lap;
+            sum_sq += lap * lap;
+            n += 1;
+        }
+    }
+    let mean = sum / n as f64;
+    sum_sq / n as f64 - mean * mean
+}
