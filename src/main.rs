@@ -11,6 +11,7 @@ mod linalg;
 mod png;
 mod ppm;
 mod recognition;
+mod report_html;
 mod saver;
 mod tracker;
 mod video;

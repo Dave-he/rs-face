@@ -2,6 +2,7 @@ use crate::cascade::Cascade;
 use crate::hog_svm::{self, HogSvmDetector};
 use crate::image::{BoxError, Image, Rect};
 use crate::imgproc::{IntegralImage, group_rectangles};
+use crate::report_html;
 use crate::tracker;
 use std::path::Path;
 
@@ -95,6 +96,8 @@ pub fn detect_in_directory(
     output_dir: &Path,
     opts: crate::DetectorOpts,
 ) -> Result<Stats, BoxError> {
+    let _ = frames_dir; // suppress
+
     let mut entries: Vec<_> = std::fs::read_dir(frames_dir)?.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.path());
     let mut stats = Stats {
@@ -254,10 +257,22 @@ pub fn detect_in_directory(
         println!("[detect] 去重: 写出 {} 张, 跳过去重 {} 张", written,
             stats.frames_with_faces.saturating_sub(written));
     }
-    // 跟踪: 用 LBPH 聚类同一人脸, 输出 tracks.json
+    // 跟踪: 用 LBPH 聚类同一人脸, 输出 tracks.json + report.html
     if track_enabled && !all_det.is_empty() {
-        if let Err(e) = track_and_save(&mut all_det, output_dir.as_path(), track_threshold) {
-            eprintln!("[detect] 跟踪失败: {}", e);
+        match track_and_save(&mut all_det, output_dir.as_path(), track_threshold) {
+            Ok(tracks) => {
+                let report = report_html::HtmlReport {
+                    video_path: frames_dir,
+                    fps: 1.0,
+                    records: &stats.records,
+                    tracks: if tracks.is_empty() { None } else { Some(&tracks) },
+                    cover_thumb: None,
+                };
+                let html_path = output_dir.join("report.html");
+                let _ = report_html::write(&report, &html_path);
+                println!("[detect] HTML 报告: {}", html_path.display());
+            }
+            Err(e) => eprintln!("[detect] 跟踪失败: {}", e),
         }
     }
     Ok(stats)
@@ -296,9 +311,9 @@ pub fn track_and_save(
     detections: &mut Vec<RawDetection>,
     output_dir: &std::path::Path,
     track_threshold: f64,
-) -> Result<(), BoxError> {
+) -> Result<Vec<tracker::FaceTrack>, BoxError> {
     if detections.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut tracker = tracker::FaceTracker::new(track_threshold);
     let mut face_ids: Vec<Vec<u32>> = Vec::with_capacity(detections.len());
@@ -313,8 +328,7 @@ pub fn track_and_save(
     let report = output_dir.join("tracks.json");
     tracker.write_report(&report)?;
     println!("[detect] 跟踪: {} 张不同人脸 → {}", tracker.num_tracks(), report.display());
-    // 暂时仅打印首尾, 详细信息在 tracks.json
-    Ok(())
+    Ok(tracker.tracks().to_vec())
 }
 
 pub fn detect_single_image(cascade: &Cascade, img: &Image, opts: &DetectionOpts) -> Vec<Rect> {
