@@ -387,3 +387,57 @@ curl -L http://test-videos.co.uk/.../Big_Buck_Bunny_360_10s_1MB.mp4 -o /tmp/bbb.
 
 - Rust 源代码: MIT License
 - `data/haarcascade_*.xml`: Intel Open Source License (文件头内已声明)
+
+---
+
+## 🔄 完整工作流: detect → name → re-detect
+
+rs-face 现在支持跨视频人脸接力: 一次标注, 永久使用。
+
+### 步骤 1 — 首次提取 (无 prior)
+
+```bash
+rs-face detect --input lecture_01.mp4 --track --key-frames-only -o ./out1
+# → out1/tracks.json (face_id=0,1,2,...)
+```
+
+### 步骤 2 — 人工命名
+
+```bash
+# 看 out1/report.html 给每张脸取名
+# 编辑 labels.txt:
+cat > labels.txt << EOL
+0: 张老师
+1: 李老师
+2: 王同学
+EOL
+
+rs-face name --tracks out1/tracks.json --labels labels.txt --out out1/tracks_named.json
+# → tracks_named.json 含 name 字段
+```
+
+### 步骤 3 — 后续视频 (复用命名)
+
+```bash
+rs-face detect --input lecture_02.mp4 --track --key-frames-only \
+  --prior-tracks out1/tracks_named.json -o ./out2
+# → out2/tracks.json 自动复用 prior face_id, 直接带人名
+```
+
+### 步骤 4 — 查看报告
+
+打开 `out2/report.html`:
+- 每张脸卡片左侧是代表帧缩略图
+- 卡片头部显示 `face_id = 0` 和 **"张老师"**
+- 进度条 + 颜色标记同一身份跨视频出现时间
+
+实测: 同一老师在 2 个视频中 face_id 都是 0, name="张老师"。
+
+### 真实场景示例
+
+```
+# 12 视频用户实测 (USER_BENCH.md):
+# 10915 帧 / 1353s / 8.07 fps / 11 成功 / 1 失败 (H.264 损坏)
+# 多人讨论课 (130.42IPv4) 检出 6 个 track → 给 6 个 face_id 命名后,
+#   下次另一个讨论课自动接续
+```

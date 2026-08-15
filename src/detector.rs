@@ -249,14 +249,15 @@ pub fn detect_in_directory(
     if key_frames_only && !all_det.is_empty() {
         for (i, (det, ids)) in all_det.iter().zip(face_ids_per_det.iter()).enumerate() {
             for (j, (f, &id)) in det.faces.iter().zip(ids.iter()).enumerate() {
-                let area = (f.w * f.h) as u32;
+                // 优先选最清晰的 (Laplacian 方差), 平局用面积
+                let sharpness = face_sharpness(&det.img, f);
                 let entry = keyframe_picks.entry(id).or_insert((i, j));
-                let prev_area = {
+                let prev_sharpness = {
                     let (pi, pj) = *entry;
                     let pf = &all_det[pi].faces[pj];
-                    (pf.w * pf.h) as u32
+                    face_sharpness(&all_det[pi].img, pf)
                 };
-                if area > prev_area {
+                if sharpness > prev_sharpness || (sharpness == prev_sharpness && (f.w * f.h) > (all_det[entry.0].faces[entry.1].w * all_det[entry.0].faces[entry.1].h)) {
                     *entry = (i, j);
                 }
             }
@@ -405,6 +406,26 @@ pub fn detect_in_directory(
     Ok(stats)
 }
 
+
+/// 计算 face crop 的 Laplacian 方差 (清晰度), 用于选最清晰的代表帧
+fn face_sharpness(img: &crate::image::Image, face: &crate::image::Rect) -> f64 {
+    let px = (face.w as f32 * 0.15) as i32;
+    let py = (face.h as f32 * 0.15) as i32;
+    let x = (face.x - px).max(0) as usize;
+    let y = (face.y - py).max(0) as usize;
+    let w = (face.w + 2 * px).min(img.width as i32 - x as i32).max(1) as usize;
+    let h = (face.h + 2 * py).min(img.height as i32 - y as i32).max(1) as usize;
+    if w < 3 || h < 3 { return 0.0; }
+    let crop = img.crop(x, y, w, h);
+    let chans = crop.channels;
+    let mut gray = vec![0u8; w * h];
+    for j in 0..h {
+        for i in 0..w {
+            gray[j * w + i] = crop.data[(j * w + i) * chans];
+        }
+    }
+    crate::imgproc::laplacian_variance(&gray, w, h)
+}
 
 /// IoU (Intersection over Union) of two axis-aligned bounding boxes.
 fn iou(a: [i32; 4], b: [i32; 4]) -> f32 {
