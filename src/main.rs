@@ -49,6 +49,8 @@ pub struct DetectorOpts {
     pub quality_filter: f64,
     /// 跨视频人脸合并: 加载先前 tracks.json 作为画廊, 合并同人脸。
     pub prior_tracks: Option<std::path::PathBuf>,
+    /// 视频概览模式: 整个视频只输出 1 张代表图 + 1 行 manifest。
+    pub video_summary: bool,
 }
 
 fn main() -> ExitCode {
@@ -230,6 +232,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
                 align_crops: o.align_crops,
                 quality_filter: o.quality_filter,
                 prior_tracks: o.prior_tracks.clone(),
+                video_summary: o.video_summary,
             },
         )?;
         println!(
@@ -278,6 +281,7 @@ fn cmd_detect(o: args::DetectOpts, started: Instant) -> Result<(), BoxError> {
             align_crops: o.align_crops,
             quality_filter: o.quality_filter,
             prior_tracks: o.prior_tracks.clone(),
+            video_summary: o.video_summary,
         },
     )?;
     println!(

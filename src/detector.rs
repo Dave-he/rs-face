@@ -174,6 +174,8 @@ pub fn detect_in_directory(
     let key_frames_only = opts.key_frames_only && track_enabled;
     let align_crops = opts.align_crops;
     let quality_filter = opts.quality_filter;
+    let video_summary = opts.video_summary;
+    let mut video_summary_pick: Option<(usize, usize)> = None;
 
     let chunks: Vec<Vec<(usize, std::path::PathBuf)>> = if total <= n_threads {
         (0..total).map(|i| vec![frames[i].clone()]).collect()
@@ -278,8 +280,21 @@ pub fn detect_in_directory(
             prev_boxes = Some(cur_boxes);
             continue;
         }
+        // 视频概览模式: 整个视频只输出 1 张 (面积最大) 代表帧
+        if video_summary {
+            let best_idx = det.faces.iter().enumerate().max_by_key(|(_, f)| f.w * f.h).map(|(i, _)| i).unwrap_or(0);
+            if let Some(picked) = video_summary_pick.as_ref() {
+                if *picked != (det_idx, best_idx) {
+                    stats.frames_with_faces += 1;
+                    prev_boxes = Some(cur_boxes);
+                    continue;
+                }
+            } else {
+                video_summary_pick = Some((det_idx, best_idx));
+            }
+        }
         // 关键帧模式: 只在是代表帧时写出
-        if key_frames_only {
+        if key_frames_only && !video_summary {
             let is_key = face_ids.iter().any(|&id| {
                 keyframe_picks.get(&id).copied() == Some((det_idx, face_ids.iter().position(|&x| x == id).unwrap()))
             });
