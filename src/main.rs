@@ -87,6 +87,7 @@ fn run(cmd: args::Command) -> Result<(), BoxError> {
         args::Command::Train(o) => cmd_train(o, started)?,
         args::Command::Recognize(o) => cmd_recognize(o, started)?,
         args::Command::Benchmark(o) => cmd_benchmark(o, started)?,
+        args::Command::Name(o) => cmd_name(o, started)?,
         args::Command::Info => cmd_info(),
         args::Command::Help => {}
     }
@@ -592,5 +593,75 @@ fn write_manifest<'a, I: IntoIterator<Item = &'a saver::FaceRecord>>(
             r.index, r.timestamp_secs, r.frame_index, r.file_name, r.face_count, face_ids, boxes
         )?;
     }
+    Ok(())
+}
+
+fn cmd_name(o: args::NameOpts, started: Instant) -> Result<(), BoxError> {
+    use std::fmt::Write as _;
+    println!("[name] tracks: {}", o.tracks.display());
+    println!("[name] labels: {}", o.labels.display());
+    let labels_content = std::fs::read_to_string(&o.labels)?;
+    let mut name_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    for line in labels_content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        // 格式: "face_id: 人名" 或 "face_id = 人名"
+        if let Some((id_str, name)) = line.split_once(':').or_else(|| line.split_once('=')) {
+            if let Ok(id) = id_str.trim().parse::<u32>() {
+                let name = name.trim().to_string();
+                if !name.is_empty() {
+                    name_map.insert(id, name);
+                }
+            }
+        }
+    }
+    let tracks_content = std::fs::read_to_string(&o.tracks)?;
+    // 解析 tracks.json 中的 face_id, 加 name 字段 (手写 JSON 替换)
+    let mut out_content = String::new();
+    let mut current_id: Option<u32> = None;
+    for line in tracks_content.lines() {
+        // 找 "face_id": N
+        if let Some(idx) = line.find("\"face_id\":") {
+            let after = &line[idx + 10..];
+            if let Some(num_end) = after.find(',') {
+                if let Ok(id) = after[..num_end].trim().parse::<u32>() {
+                    current_id = Some(id);
+                }
+            }
+        }
+        // 找到 name 字段, 替换或插入
+        if line.contains("\"name\":") {
+            // 已有 name, 跳过
+            if current_id.is_some() {
+                out_content.push_str(&line);
+                out_content.push('\n');
+                continue;
+            }
+        }
+        // 在 last_ts 后插入 name
+        if current_id.is_some() && line.contains("\"last_ts\":") {
+            out_content.push_str(&line);
+            out_content.push('\n');
+            let id = current_id.unwrap();
+            let name = name_map.get(&id).cloned().unwrap_or_default();
+            let indent = "      ";
+            if name.is_empty() {
+                let _ = writeln!(out_content, "{}\"name\": null,", indent);
+            } else {
+                let _ = writeln!(out_content, "{}\"name\": \"{}\",", indent, name);
+            }
+            current_id = None;
+            continue;
+        }
+        out_content.push_str(line);
+        out_content.push('\n');
+    }
+    let out_path = o.out.unwrap_or_else(|| o.tracks.parent().unwrap_or(std::path::Path::new(".")).join("tracks_named.json"));
+    std::fs::write(&out_path, out_content)?;
+    println!("[name] 命名映射: {} 张脸 → {}", name_map.len(), out_path.display());
+    for (id, name) in &name_map {
+        println!("  face_id = {:3} → {}", id, name);
+    }
+    println!("[name] 用时: {:.2}s", started.elapsed().as_secs_f64());
     Ok(())
 }
