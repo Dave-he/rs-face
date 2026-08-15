@@ -90,6 +90,7 @@ fn run(cmd: args::Command) -> Result<(), BoxError> {
         args::Command::Recognize(o) => cmd_recognize(o, started)?,
         args::Command::Benchmark(o) => cmd_benchmark(o, started)?,
         args::Command::Name(o) => cmd_name(o, started)?,
+        args::Command::Collect(o) => cmd_collect(o, started)?,
         args::Command::Info => cmd_info(),
         args::Command::Help => {}
     }
@@ -668,4 +669,147 @@ fn cmd_name(o: args::NameOpts, started: Instant) -> Result<(), BoxError> {
     }
     println!("[name] 用时: {:.2}s", started.elapsed().as_secs_f64());
     Ok(())
+}
+
+fn cmd_collect(o: args::CollectOpts, started: Instant) -> Result<(), BoxError> {
+    use crate::image::Image;
+    println!("[collect] tracks: {}", o.tracks.display());
+    println!("[collect] frames: {}", o.frames_dir.display());
+    println!("[collect] 输出: {}", o.out.display());
+    let content = std::fs::read_to_string(&o.tracks)?;
+    // 解析 tracks.json (手写, 零依赖)
+    // 找 "face_id": N, "name": "...", "frames": [{file_index, timestamp_secs, box}]
+    let mut track_blocks: Vec<(u32, Option<String>, Vec<u64>)> = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i + 30 < bytes.len() {
+        if let Some(p) = content[i..].find("\"face_id\":") {
+            let abs = i + p;
+            let after = abs + 10;
+            let mut j = after;
+            while j < bytes.len() && (bytes[j] as char).is_whitespace() { j += 1; }
+            let num_start = j;
+            while j < bytes.len() && (bytes[j] as char).is_ascii_digit() { j += 1; }
+            if let Ok(id) = content[num_start..j].parse::<u32>() {
+                // 找 name
+                let mut name: Option<String> = None;
+                if let Some(np) = content[j..].find("\"name\":") {
+                    let n_abs = j + np + 7;
+                    let mut k = n_abs;
+                    while k < bytes.len() && ((bytes[k] as char).is_whitespace() || bytes[k] == b'"') {
+                        k += 1;
+                    }
+                    if let Some(ne) = content[k..].find('"') {
+                        let nstr = &content[k..k + ne];
+                        if !nstr.is_empty() && nstr != "null" {
+                            name = Some(nstr.to_string());
+                        }
+                    }
+                }
+                // 找 frames 数组, 提取 file_index
+                let mut frames: Vec<u64> = Vec::new();
+                if let Some(fp) = content[j..].find("\"frames\":") {
+                    let f_abs = j + fp + 9;
+                    if let Some(start_bracket) = content[f_abs..].find('[') {
+                        let sb_abs = f_abs + start_bracket;
+                        let mut depth = 0;
+                        let mut end = sb_abs;
+                        for (idx, c) in content[sb_abs..].char_indices() {
+                            let pos = sb_abs + idx;
+                            if c == '[' { depth += 1; }
+                            else if c == ']' { depth -= 1; if depth == 0 { end = pos; break; } }
+                        }
+                        let frames_str = &content[sb_abs + 1..end];
+                        // 简化解析: 用正则式扫描 "file_index": N, 数字 + 逗号
+                        let mut search_start = 0;
+                        while let Some(p) = frames_str[search_start..].find("\"file_index\":") {
+                            let abs_p = search_start + p;
+                            let after = &frames_str[abs_p + 13..];
+                            let bytes = after.as_bytes();
+                            let mut k = 0;
+                            while k < bytes.len() && (bytes[k] as char).is_whitespace() { k += 1; }
+                            let n_start = k;
+                            while k < bytes.len() && (bytes[k] as char).is_ascii_digit() { k += 1; }
+                            if n_start < k {
+                                if let Ok(fi) = std::str::from_utf8(&bytes[n_start..k]).unwrap_or("0").parse::<u64>() {
+                                    frames.push(fi);
+                                }
+                            }
+                            // 跳到下一个 } 后
+                            if let Some(next) = after[k..].find('}') {
+                                search_start = abs_p + 13 + k + next + 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                track_blocks.push((id, name, frames));
+                i = j;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    println!("[collect] 解析到 {} 个 track", track_blocks.len());
+    let mut total_written = 0;
+    for (id, name, frame_indices) in track_blocks {
+        let dir_name = name.as_deref().unwrap_or("unknown");
+        let out_dir = o.out.join(sanitize_filename(dir_name));
+        std::fs::create_dir_all(&out_dir)?;
+        // 取前 N 个
+        let samples: Vec<u64> = frame_indices.iter().take(o.samples_per_track).copied().collect();
+        let mut written = 0;
+        for &fi in &samples {
+            // 优先 PGM, 失败时 PNG (rs-face --keep-frames 写的就是 PNG)
+            let pattern_pgm = o.frames_dir.join(format!("frame_{:06}.pgm", fi));
+            let pattern_png = o.frames_dir.join(format!("frame_{:06}.png", fi));
+            let pattern = if pattern_pgm.exists() { pattern_pgm }
+                          else if pattern_png.exists() { pattern_png }
+                          else { continue };
+            // 读图: PGM 或 PNG (单通道灰度)
+            let img = if pattern.extension().and_then(|e| e.to_str()) == Some("pgm") {
+                if let Ok(pgm) = crate::ppm::read_pgm(&pattern) {
+                    Image {
+                        width: pgm.w as usize,
+                        height: pgm.h as usize,
+                        channels: 1,
+                        data: pgm.data,
+                    }
+                } else { continue; }
+            } else {
+                if let Ok(img) = Image::load_pgm(&pattern) {
+                    img
+                } else { continue; }
+            };
+            // 整图缩放到 92x112 (后续会用 align.rs 加人脸对齐)
+            let resized = img.resize_bilinear(92, 112);
+            let gray = crate::ppm::GrayImage {
+                w: resized.width as u32,
+                h: resized.height as u32,
+                data: resized.data,
+            };
+            let out_path = out_dir.join(format!("{:03}_face{}.pgm", fi, id));
+            let _ = crate::ppm::write_pgm(&out_path, &gray);
+            written += 1;
+        }
+        if written > 0 {
+            println!("[collect] face_id={:3} ({}) → {} 张 → {}",
+                id, dir_name, written, out_dir.display());
+            total_written += written;
+        }
+    }
+    println!("[collect] 总计写入 {} 张人脸 → {}", total_written, o.out.display());
+    println!("[collect] 用时: {:.2}s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// 安全的文件名 (去除路径分隔符等)
+fn sanitize_filename(name: &str) -> String {
+    name.chars().map(|c| match c {
+        '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+        c => c,
+    }).collect()
 }

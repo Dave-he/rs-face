@@ -8,8 +8,17 @@ pub enum Command {
     Recognize(RecognizeOpts),
     Benchmark(BenchmarkOpts),
     Name(NameOpts),
+    Collect(CollectOpts),
     Info,
     Help,
+}
+
+#[derive(Debug, Clone)]
+pub struct CollectOpts {
+    pub tracks: PathBuf,
+    pub frames_dir: PathBuf,
+    pub out: PathBuf,
+    pub samples_per_track: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -154,13 +163,14 @@ pub fn parse() -> Result<Command, BoxError> {
         "recognize" | "rec" => parse_recognize(&args[1..]),
         "benchmark" | "bench" => parse_benchmark(&args[1..]),
         "name" => parse_name(&args[1..]),
+        "collect" => parse_collect(&args[1..]),
         "info" => Ok(Command::Info),
         "--help" | "-h" | "help" => {
             print_help();
             Ok(Command::Help)
         }
         s if s.starts_with('-') => parse_detect(&args[..]),
-        s => Err(format!("未知子命令: {} (可用: detect, train, recognize, benchmark, name, info)", s).into()),
+        s => Err(format!("未知子命令: {} (可用: detect, train, recognize, benchmark, name, collect, info)", s).into()),
     }
 }
 
@@ -348,6 +358,29 @@ fn parse_name(args: &[String]) -> Result<Command, BoxError> {
         return Err("name 必须指定 --tracks 和 --labels".into());
     }
     Ok(Command::Name(NameOpts { tracks, labels, out }))
+}
+
+fn parse_collect(args: &[String]) -> Result<Command, BoxError> {
+    let mut tracks = PathBuf::new();
+    let mut frames_dir = PathBuf::new();
+    let mut out = PathBuf::from("./dataset");
+    let mut samples_per_track = 5;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--tracks" => { tracks = take_path(args, &mut i)?; }
+            "--frames" => { frames_dir = take_path(args, &mut i)?; }
+            "--out" | "-o" => { out = take_path(args, &mut i)?; }
+            "--samples" => { samples_per_track = take_str(args, &mut i)?.parse()?; }
+            "--help" | "-h" => { print_help(); return Ok(Command::Help); }
+            other => return Err(format!("未知 collect 参数: {}", other).into()),
+        }
+        i += 1;
+    }
+    if tracks.as_os_str().is_empty() || frames_dir.as_os_str().is_empty() {
+        return Err("collect 必须指定 --tracks 和 --frames".into());
+    }
+    Ok(Command::Collect(CollectOpts { tracks, frames_dir, out, samples_per_track }))
 }
 
 fn take_path(args: &[String], i: &mut usize) -> Result<PathBuf, BoxError> {
