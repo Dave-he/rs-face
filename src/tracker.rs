@@ -28,6 +28,8 @@ pub struct FaceTrack {
     pub frames: Vec<TrackFrame>,
     /// 代表帧的图像 (face 框最大的那一帧), 用于 HTML 报告缩略图
     pub cover: Option<crate::image::Image>,
+    /// 人名 (来自 --prior-tracks 或 `name` 子命令)
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +116,7 @@ impl FaceTracker {
             sample_box: box_,
             frames: vec![TrackFrame { file_index, timestamp_secs: ts_secs, box_ }],
             cover: Some(img.clone()),
+            name: None,
         });
         id
     }
@@ -265,10 +268,11 @@ impl FaceTracker {
     /// 从先前 run 的 tracks.json 加载画廊, 把当前帧合并到旧 face_id (跨视频合并)
     pub fn load_and_merge_from_json(&mut self, path: &Path, merge_threshold: f64) -> Result<(), String> {
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        // 解析 tracks 数组: 找 "face_id": N, .* "sample_box": [x, y, w, h], .* "gallery": [...]
+        // 解析 tracks 数组: 找 "face_id": N, .* "sample_box": [x, y, w, h], .* "gallery": [...], .* "name": "..."
         let mut prior_ids: Vec<u32> = Vec::new();
         let mut prior_boxes: Vec<[i32; 4]> = Vec::new();
         let mut prior_galleries: Vec<Vec<f64>> = Vec::new();
+        let mut prior_names: Vec<Option<String>> = Vec::new();
         let bytes = content.as_bytes();
         let mut i = 0;
         while i + 30 < bytes.len() {
@@ -300,7 +304,7 @@ impl FaceTracker {
                         }
                     }
                     prior_boxes.push(box_);
-                    // 找 "gallery": (在 tracks.json 高版本里有, 旧版没)
+                    // 找 "gallery":
                     let rest = &content[j..];
                     if let Some(gp) = rest.find("\"gallery\":") {
                         let g_abs = j + gp + 10;
@@ -311,9 +315,34 @@ impl FaceTracker {
                             let vals: Vec<f64> = inside.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                             if !vals.is_empty() {
                                 prior_galleries.push(vals);
+                            } else {
+                                prior_galleries.push(Vec::new());
+                            }
+                        } else {
+                            prior_galleries.push(Vec::new());
+                        }
+                    } else {
+                        prior_galleries.push(Vec::new());
+                    }
+                    // 找 "name": "..." (可能是 null)
+                    let mut name: Option<String> = None;
+                    if let Some(np) = rest.find("\"name\":") {
+                        let n_abs = j + np + 7;
+                        // 跳过空白和引号
+                        let mut k = n_abs;
+                        while k < bytes.len() && ((bytes[k] as char).is_whitespace() || bytes[k] == b'"') {
+                            k += 1;
+                        }
+                        // 找到字符串结束或 null
+                        let n_end = content[k..].find('"').or_else(|| content[k..].find(','));
+                        if let Some(ne) = n_end {
+                            let nstr = &content[k..k + ne];
+                            if !nstr.is_empty() && nstr != "null" {
+                                name = Some(nstr.to_string());
                             }
                         }
                     }
+                    prior_names.push(name);
                 }
                 i = j;
             } else {
@@ -323,15 +352,14 @@ impl FaceTracker {
         if prior_ids.is_empty() {
             return Err("no tracks found in prior JSON".into());
         }
-        // 合并策略:
-        // 1) 若 prior_galleries 非空, 用 LBPH 余弦距离 (细筛)
-        // 2) 否则, 用 box 位置 + 大小相似度 (粗筛)
-        let use_gallery = !prior_galleries.is_empty() && prior_galleries.iter().all(|g| g.len() == self.galleries.first().map(|x| x.len()).unwrap_or(0));
+        let use_gallery = !prior_galleries.is_empty() && prior_galleries.iter().all(|g| !g.is_empty() && g.len() == self.galleries.first().map(|x| x.len()).unwrap_or(0));
         let mut id_map: Vec<u32> = (0..self.tracks.len() as u32).collect();
+        let mut name_assign: Vec<Option<String>> = vec![None; self.tracks.len()];
         for (i, cur) in self.tracks.iter().enumerate() {
             let cb = cur.sample_box;
             let mut best_id = cur.id;
             let mut best_dist = f64::INFINITY;
+            let mut best_name: Option<String> = None;
             for (j, &pb) in prior_boxes.iter().enumerate() {
                 let dx = (cb[0] - pb[0]).abs();
                 let dy = (cb[1] - pb[1]).abs();
@@ -349,12 +377,23 @@ impl FaceTracker {
                 if dist < best_dist {
                     best_dist = dist;
                     best_id = prior_ids[j];
+                    best_name = prior_names.get(j).cloned().unwrap_or(None);
                 }
             }
             id_map[i] = best_id;
+            if best_name.is_some() {
+                name_assign[i] = best_name;
+            }
         }
         for (i, &new_id) in id_map.iter().enumerate() {
             self.tracks[i].id = new_id;
+        }
+        for (i, name) in name_assign.into_iter().enumerate() {
+            if let Some(n) = name {
+                if self.tracks[i].name.is_none() {
+                    self.tracks[i].name = Some(n);
+                }
+            }
         }
         Ok(())
     }
@@ -377,6 +416,9 @@ impl FaceTracker {
             let _ = writeln!(s, "      \"last_ts\": {:.6},", t.last_ts);
             let _ = writeln!(s, "      \"duration_secs\": {:.6},", t.last_ts - t.first_ts);
             let _ = writeln!(s, "      \"frame_count\": {},", t.frame_count);
+            if let Some(ref name) = t.name {
+                let _ = writeln!(s, "      \"name\": \"{}\",", name);
+            }
             let _ = writeln!(s, "      \"sample_box\": [{}, {}, {}, {}]", t.sample_box[0], t.sample_box[1], t.sample_box[2], t.sample_box[3]);
             if let Some(g) = self.galleries.get(i) {
                 s.push_str(",\n      \"gallery\": [");
