@@ -441,3 +441,37 @@ rs-face detect --input lecture_02.mp4 --track --key-frames-only \
 # 多人讨论课 (130.42IPv4) 检出 6 个 track → 给 6 个 face_id 命名后,
 #   下次另一个讨论课自动接续
 ```
+
+### I. 端到端识别工作流 (5 步从视频到识别)
+
+```bash
+# 1. 检测: 从视频提取人脸 + 聚类
+rs-face detect --input lecture.mp4 --track --keep-frames --tmp-dir /tmp/f \
+  --key-frames-only -o ./out1
+# → out1/tracks.json (face_id=0,1,...)
+# → /tmp/f/frames/frame_000001.pgm ...
+
+# 2. 命名: 编辑 labels.txt 后生成命名 JSON
+cat > labels.txt << EOL
+0: 张老师
+1: 李老师
+EOL
+rs-face name --tracks out1/tracks.json --labels labels.txt \
+  --out out1/tracks_named.json
+
+# 3. 收集: 自动生成训练数据集 (dataset/<人名>/*.pgm)
+rs-face collect --tracks out1/tracks_named.json \
+  --frames /tmp/f/frames --out ./dataset --samples 5
+# → dataset/张老师/001_face0.pgm ...
+
+# 4. 训练: 在自动收集的数据集上训练识别模型
+rs-face train --dataset ./dataset --algorithm fisherfaces \
+  --components 50 --out ./model.bin
+
+# 5. 识别: 在新视频上自动识别
+rs-face recognize --model ./model.bin --input new.mp4
+# → 输出: 人脸位置 + 命中的人名
+```
+
+这是一个完整的"标注一次, 永久识别"闭环。
+
