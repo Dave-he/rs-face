@@ -424,8 +424,17 @@ fn cmd_train(o: args::TrainOpts, started: Instant) -> Result<(), BoxError> {
 fn cmd_recognize(o: args::RecognizeOpts, started: Instant) -> Result<(), BoxError> {
     println!("[recognize] 加载模型: {}", o.model.display());
     let model = recognition::FaceModel::load(&o.model)?;
-    let raw_img = image::Image::load_pgm(&o.input).or_else(|_| image::Image::load_ppm(&o.input))?;
-    println!("[recognize] 输入: {} ({}x{})", o.input.display(), raw_img.width, raw_img.height);
+
+    // 视频模式: ffmpeg 抽帧 → 逐帧 detect + 识别 → manifest.txt
+    if let Some(ref video_path) = o.video {
+        let o2 = o.clone();
+        return cmd_recognize_video(o2, model, video_path, started);
+    }
+
+    // 单图模式
+    let input_path = o.input.as_ref().ok_or("recognize 必须指定 --input 或 --video")?;
+    let raw_img = image::Image::load_pgm(input_path).or_else(|_| image::Image::load_ppm(input_path))?;
+    println!("[recognize] 输入: {} ({}x{})", input_path.display(), raw_img.width, raw_img.height);
     let face_rects: Vec<image::Rect> = if let Some(ref cpath) = o.cascade_path {
         let cascade = cascade::Cascade::load_from_xml(cpath)?;
         let det_opts = detector::DetectionOpts::default();
@@ -471,13 +480,105 @@ fn cmd_recognize(o: args::RecognizeOpts, started: Instant) -> Result<(), BoxErro
     }
     if let Some(out_dir) = o.output {
         std::fs::create_dir_all(&out_dir)?;
-        let stem = o.input.file_stem().and_then(|s| s.to_str()).unwrap_or("rec");
+        let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("rec");
         let out_path = out_dir.join(format!("{}_recognized.png", stem));
         result_img.save_png(&out_path)?;
         println!("[recognize] 标注图: {}", out_path.display());
     }
     println!("[recognize] 用时: {:.2}s", started.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// 视频模式: ffmpeg 抽帧 → Haar 检测 → 训练模型推理 → manifest.txt
+fn cmd_recognize_video(
+    o: args::RecognizeOpts,
+    model: recognition::FaceModel,
+    video_path: &std::path::Path,
+    started: std::time::Instant,
+) -> Result<(), BoxError> {
+    use std::io::Write;
+    let tmp_dir = o.tmp_dir.clone().unwrap_or_else(|| std::env::temp_dir().join("rs-face-rec"));
+    std::fs::create_dir_all(&tmp_dir)?;
+    let frames_dir = tmp_dir.join("frames");
+    if frames_dir.exists() { std::fs::remove_dir_all(&frames_dir)?; }
+    std::fs::create_dir_all(&frames_dir)?;
+    println!("[recognize] ffmpeg 抽帧 fps={:.3}", o.fps);
+    video::extract_frames_pgm(video_path, &frames_dir, o.fps)?;
+    println!("[recognize] 加载 Cascade");
+    let cascade = if let Some(ref cp) = o.cascade_path {
+        cascade::Cascade::load_from_xml(cp)?
+    } else {
+        // 用默认 cascade
+        let default = std::path::PathBuf::from("data/haarcascade_frontalface_alt2.xml");
+        cascade::Cascade::load_from_xml(&default)?
+    };
+    let mut entries: Vec<_> = std::fs::read_dir(&frames_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.path());
+    let total = entries.len();
+    println!("[recognize] {} 帧待识别", total);
+    let out_dir = o.output.clone().unwrap_or_else(|| std::path::PathBuf::from("./rec_out"));
+    std::fs::create_dir_all(&out_dir)?;
+    let manifest_path = out_dir.join("manifest.txt");
+    let mut manifest = std::fs::File::create(&manifest_path)?;
+    writeln!(manifest, "# rs-face recognize --video manifest")?;
+    writeln!(manifest, "# format: index<TAB>timestamp_secs<TAB>file_name<TAB>name<TAB>confidence<TAB>box")?;
+    let mut stats = RecognizeStats::default();
+    for (idx, entry) in entries.iter().enumerate() {
+        let path = entry.path();
+        let img = match image::Image::load_pgm(&path) {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        let det_opts = detector::DetectionOpts {
+            min_size: o.min_size,
+            max_size: o.max_size,
+            scale_factor: 1.25,
+            min_neighbors: 3,
+            step: 4,
+            flip_detect: false,
+            hog_svm: None,
+            hog_threshold: 0.0,
+        };
+        let faces = detector::detect_faces(&cascade, &img, &det_opts);
+        if faces.is_empty() { continue; }
+        let (ts_secs, frame_idx) = saver::parse_frame_timestamp(&path);
+        let mut annotated = img.clone();
+        for f in &faces {
+            let vec = align::preprocess_for_recognition(&img, Some(f), o.size);
+            let (lbl, conf, name) = model.predict_raw(&vec, o.size.0, o.size.1);
+            let display_name = name.clone().unwrap_or_else(|| format!("<未知_{}>", lbl));
+            saver::draw_label(&mut annotated, f.x, f.y, &format!("{} {:.0}%", display_name, conf * 100.0));
+            // manifest 一行
+            writeln!(manifest, "{}\t{:.3}\t{}\t{}\t{:.3}\t{},{},{},{}",
+                idx + 1, ts_secs,
+                path.file_name().and_then(|s| s.to_str()).unwrap_or("?"),
+                display_name, conf,
+                f.x, f.y, f.w, f.h)?;
+            stats.frames_recognized += 1;
+            stats.total_confidence += conf;
+            if name.is_some() { stats.frames_matched += 1; }
+        }
+        annotated.save_png(&out_dir.join(format!("{:04}_{:.1}s.png", idx + 1, ts_secs)))?;
+    }
+    if stats.frames_recognized > 0 {
+        println!("[recognize] {} 帧含人脸, {} 命中 (>阈值), 平均置信度 {:.3}",
+            stats.frames_recognized, stats.frames_matched,
+            stats.total_confidence / stats.frames_recognized as f64);
+    } else {
+        println!("[recognize] 未检测到任何人脸");
+    }
+    println!("[recognize] 清单: {}", manifest_path.display());
+    println!("[recognize] 用时: {:.2}s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+#[derive(Default)]
+struct RecognizeStats {
+    frames_recognized: u32,
+    frames_matched: u32,
+    total_confidence: f64,
 }
 
 fn cmd_benchmark(o: args::BenchmarkOpts, started: Instant) -> Result<(), BoxError> {

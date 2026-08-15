@@ -99,11 +99,16 @@ impl Algorithm {
 #[derive(Debug, Clone)]
 pub struct RecognizeOpts {
     pub model: PathBuf,
-    pub input: PathBuf,
+    pub input: Option<PathBuf>,
+    pub video: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub threshold: Option<f64>,
     pub size: (usize, usize),
     pub cascade_path: Option<PathBuf>,
+    pub fps: f64,
+    pub min_size: u32,
+    pub max_size: u32,
+    pub tmp_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -254,17 +259,23 @@ fn parse_train(args: &[String]) -> Result<Command, BoxError> {
 
 fn parse_recognize(args: &[String]) -> Result<Command, BoxError> {
     let mut model = PathBuf::new();
-    let mut input = PathBuf::new();
+    let mut input: Option<PathBuf> = None;
+    let mut video: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut threshold: Option<f64> = None;
     let mut size_w = 92;
     let mut size_h = 112;
     let mut cascade_path: Option<PathBuf> = None;
+    let mut fps = 1.0;
+    let mut min_size = 60;
+    let mut max_size = 600;
+    let mut tmp_dir: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--model" | "-m" => { model = take_path(args, &mut i)?; }
-            "--input" | "-i" => { input = take_path(args, &mut i)?; }
+            "--input" | "-i" => { input = Some(take_path(args, &mut i)?); }
+            "--video" => { video = Some(take_path(args, &mut i)?); }
             "--output" | "-o" => { output = Some(take_path(args, &mut i)?); }
             "--threshold" | "-t" => { threshold = Some(take_str(args, &mut i)?.parse()?); }
             "--size" => {
@@ -276,20 +287,31 @@ fn parse_recognize(args: &[String]) -> Result<Command, BoxError> {
                 }
             }
             "--cascade" => { cascade_path = Some(take_path(args, &mut i)?); }
+            "--fps" => { fps = take_str(args, &mut i)?.parse()?; }
+            "--min-size" => { min_size = take_str(args, &mut i)?.parse()?; }
+            "--max-size" => { max_size = take_str(args, &mut i)?.parse()?; }
+            "--tmp-dir" => { tmp_dir = Some(take_path(args, &mut i)?); }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
             other => return Err(format!("未知 recognize 参数: {}", other).into()),
         }
         i += 1;
     }
     if model.as_os_str().is_empty() { return Err("recognize 必须指定 --model".into()); }
-    if input.as_os_str().is_empty() { return Err("recognize 必须指定 --input".into()); }
+    if input.is_none() && video.is_none() {
+        return Err("recognize 必须指定 --input (图片) 或 --video (视频)".into());
+    }
     Ok(Command::Recognize(RecognizeOpts {
         model,
         input,
+        video,
         output,
         threshold,
         size: (size_w, size_h),
         cascade_path,
+        fps,
+        min_size,
+        max_size,
+        tmp_dir,
     }))
 }
 
@@ -409,6 +431,8 @@ pub fn print_help() {
     println!("  train      用数据集训练人脸识别模型");
     println!("  recognize  用已有模型识别图片中的人脸");
     println!("  benchmark  在公开人脸库上跑识别/验证基准 (ORL/Yale/LFW)");
+    println!("  name       给 tracks.json 的 face_id 命名 (face_id → 人名)");
+    println!("  collect    从 tracks.json 自动收集人脸到 dataset/<人名>/");
     println!("  info       显示系统信息");
     println!();
     println!("detect 参数:");
@@ -431,6 +455,13 @@ pub fn print_help() {
     println!("  --hog-svm <path>    加载 HOG+SVM 第二阶段检测器 (Dalal-Triggs 2005)");
     println!("  --hog-threshold <f> HOG+SVM 决策阈值 [默认: 0.0]");
     println!("  --dedup-iou <f>     相邻帧人脸 IoU > f 视为重复, 不写盘 [默认: 0.0 = 不去重]");
+    println!("  --track             开启人脸跟踪 (LBPH 聚类, 写 tracks.json)");
+    println!("  --track-threshold <f>  人脸聚类余弦距离阈值 [默认: 0.3]");
+    println!("  --key-frames-only   每个 track 只输出 1 张代表帧 (节省 90% 空间)");
+    println!("  --align-crops       裁剪并对齐人脸 (固定 92x112) 再保存");
+    println!("  --quality-filter <f> Laplacian 方差 < f 视为模糊, 跳过 [默认: 0.0 = 不过滤]");
+    println!("  --video-summary     整个视频只输出 1 张代表图 + 1 行 manifest");
+    println!("  --prior-tracks <f>  加载先前 tracks.json 跨视频合并人脸");
     println!();
     println!("train 参数:");
     println!("  --dataset <dir>     数据集目录（每个子目录=一个人,或按 filename_label.ext 命名）");
@@ -454,6 +485,17 @@ pub fn print_help() {
     println!("  --algorithm <a>     eigenfaces|fisherfaces|lbph|all [默认: eigenfaces]");
     println!("  --folds <k>         K 折交叉验证 [默认: 5]");
     println!("  --max-pairs <n>     验证任务最大配对数 [默认: 2000]");
+    println!();
+    println!("name 参数:");
+    println!("  --tracks <file>     tracks.json 路径");
+    println!("  --labels <file>     人名标签文件, 格式 'face_id: 人名'");
+    println!("  --out <file>        输出含 name 字段的 tracks_named.json");
+    println!();
+    println!("collect 参数:");
+    println!("  --tracks <file>     tracks_named.json 路径");
+    println!("  --frames <dir>      帧目录 (--keep-frames 抽出来的 PGM)");
+    println!("  --out <dir>         输出数据集根目录 [默认: ./dataset]");
+    println!("  --samples <n>       每个 track 取多少张 [默认: 5]");
     println!("  --seed <n>          RNG 种子 [默认: 42]");
     println!("  --size WxH          训练/识别图像尺寸 [默认: 92x112]");
     println!("  'all' 同时跑三个算法并合并为一份报告 (含总览对比表)");
