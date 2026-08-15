@@ -105,14 +105,21 @@ fn filter_none(img: &Image) -> Vec<u8> {
 /// 编码 PNG。Image 必须是灰度 8-bit (channels=1)。
 pub fn write_png<P: AsRef<Path>>(path: P, img: &Image) -> Result<(), String> {
     let path = path.as_ref();
+    let mut file = BufWriter::new(File::create(path).map_err(|e| format!("创建 {} 失败: {}", path.display(), e))?);
+    write_png_to_writer(img, &mut file).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 把 PNG 写到任意 Write (用于内嵌到 HTML)
+pub fn write_png_to_writer<W: Write>(img: &Image, file: &mut W) -> Result<(), String> {
     let w = img.width as u32;
     let h = img.height as u32;
     if img.channels != 1 {
         return Err(format!("PNG 编码仅支持灰度图, channels={}", img.channels));
     }
-    let mut file = BufWriter::new(File::create(path).map_err(|e| format!("创建 {} 失败: {}", path.display(), e))?);
 
-    write_signature(&mut file).map_err(|e| e.to_string())?;
+    write_signature(file).map_err(|e| e.to_string())?;
 
     let mut ihdr = Vec::with_capacity(13);
     ihdr.extend_from_slice(&w.to_be_bytes());
@@ -122,12 +129,10 @@ pub fn write_png<P: AsRef<Path>>(path: P, img: &Image) -> Result<(), String> {
     ihdr.push(0);
     ihdr.push(0);
     ihdr.push(0);
-    write_chunk(&mut file, b"IHDR", &ihdr).map_err(|e| e.to_string())?;
+    write_chunk(file, b"IHDR", &ihdr).map_err(|e| e.to_string())?;
 
-    // 1. 滤镜 (None, 兼容所有解码器)
     let filtered = filter_none(img);
 
-    // 2. zlib 容器: 2 byte header + stored block(s) + 4 byte ADLER32
     let mut zlib = Vec::with_capacity(filtered.len() + 8);
     zlib.push(0x78);
     zlib.push(0x01);
@@ -135,7 +140,7 @@ pub fn write_png<P: AsRef<Path>>(path: P, img: &Image) -> Result<(), String> {
     while pos < filtered.len() {
         let block_len = (filtered.len() - pos).min(65535);
         let bfinal = if pos + block_len == filtered.len() { 1 } else { 0 };
-        zlib.push(bfinal); // BFINAL + BTYPE=00 (stored)
+        zlib.push(bfinal);
         zlib.extend_from_slice(&(block_len as u16).to_le_bytes());
         zlib.extend_from_slice(&(!block_len as u16).to_le_bytes());
         zlib.extend_from_slice(&filtered[pos..pos + block_len]);
@@ -143,9 +148,8 @@ pub fn write_png<P: AsRef<Path>>(path: P, img: &Image) -> Result<(), String> {
     }
     zlib.extend_from_slice(&adler32(&filtered).to_be_bytes());
 
-    write_chunk(&mut file, b"IDAT", &zlib).map_err(|e| e.to_string())?;
-    write_chunk(&mut file, b"IEND", &[]).map_err(|e| e.to_string())?;
-    file.flush().map_err(|e| e.to_string())?;
-    let _ = paeth; // suppress unused warning
+    write_chunk(file, b"IDAT", &zlib).map_err(|e| e.to_string())?;
+    write_chunk(file, b"IEND", &[]).map_err(|e| e.to_string())?;
+    let _ = paeth;
     Ok(())
 }

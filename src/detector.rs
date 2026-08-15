@@ -375,7 +375,12 @@ pub fn detect_in_directory(
                 fps: 1.0,
                 records: &stats.records,
                 tracks: if tracks.is_empty() { None } else { Some(&tracks) },
-                cover_thumb: None,
+                thumbnails: tracks.iter().filter_map(|t| {
+                    t.cover.as_ref().map(|img| report_html::Thumbnail {
+                        face_id: t.id,
+                        png_base64: report_html::extract_thumbnails(t, img),
+                    })
+                }).filter(|t| !t.png_base64.is_empty()).collect(),
             };
             let html_path = output_dir.join("report.html");
             let _ = report_html::write(&report, &html_path);

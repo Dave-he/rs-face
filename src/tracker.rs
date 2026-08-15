@@ -26,6 +26,8 @@ pub struct FaceTrack {
     pub frame_count: u32,
     pub sample_box: [i32; 4],
     pub frames: Vec<TrackFrame>,
+    /// 代表帧的图像 (face 框最大的那一帧), 用于 HTML 报告缩略图
+    pub cover: Option<crate::image::Image>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +113,7 @@ impl FaceTracker {
             frame_count: 1,
             sample_box: box_,
             frames: vec![TrackFrame { file_index, timestamp_secs: ts_secs, box_ }],
+            cover: Some(img.clone()),
         });
         id
     }
