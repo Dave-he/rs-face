@@ -208,6 +208,13 @@ fn parse_detect(args: &[String]) -> Result<Command, BoxError> {
             "--key-frames-only" => { opts.key_frames_only = true; }
             "--align-crops" => { opts.align_crops = true; }
             "--quality-filter" => { opts.quality_filter = take_str(args, &mut i)?.parse()?; }
+            "--high-recall" => {
+                // 高召回率预设: 适合远景/小脸场景, 慢 ~5x 但召回 +10%
+                opts.min_size = 20;
+                opts.scale_factor = 1.10;
+                opts.step = 2; // 不自动升 step, 保召回
+                println!("[detect] 高召回率预设: min_size=20 scale=1.10 step=2 (慢 ~5x)");
+            }
             "--prior-tracks" => { opts.prior_tracks = Some(take_path(args, &mut i)?); }
             "--video-summary" => { opts.video_summary = true; }
             "--help" | "-h" => { print_help(); return Ok(Command::Help); }
@@ -462,6 +469,7 @@ pub fn print_help() {
     println!("  --quality-filter <f> Laplacian 方差 < f 视为模糊, 跳过 [默认: 0.0 = 不过滤]");
     println!("  --video-summary     整个视频只输出 1 张代表图 + 1 行 manifest");
     println!("  --prior-tracks <f>  加载先前 tracks.json 跨视频合并人脸");
+    println!("  --high-recall       高召回预设 (min_size=20 scale=1.10 step=2, 慢 ~5x)");
     println!();
     println!("train 参数:");
     println!("  --dataset <dir>     数据集目录（每个子目录=一个人,或按 filename_label.ext 命名）");

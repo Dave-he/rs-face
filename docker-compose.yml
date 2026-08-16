@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  rs-face:
+    build: .
+    image: rs-face:latest
+    volumes:
+      - ./:/data
+    working_dir: /data
+    # 默认跑 --help; 改成实际命令, e.g.:
+    # command: detect --input /data/lecture.mp4 --output /data/out --track

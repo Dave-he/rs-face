@@ -6,6 +6,65 @@
 
 ---
 
+## ⚡ Quick Tour (30 秒读完)
+
+```bash
+# 安装 ffmpeg (仅外部依赖)
+brew install ffmpeg    # macOS
+sudo apt install ffmpeg  # Ubuntu/Debian
+
+# 构建
+git clone https://github.com/Dave-he/rs-face && cd rs-face
+cargo build --release    # → 1MB 二进制
+
+# 从视频提取人脸 (按时间戳命名 PNG)
+./target/release/rs-face detect --input lecture.mp4 -o ./out
+
+# 跟踪同一张脸跨帧聚类 + 自动生成 tracks.json + report.html
+./target/release/rs-face detect --input lecture.mp4 -o ./out --track
+
+# 5 步端到端识别 (从无标注 → 自动识别新视频)
+./target/release/rs-face detect --input lecture.mp4 --track --keep-frames --key-frames-only \
+  --tmp-dir /tmp/f -o ./out1
+# 编辑 labels.txt: "0: 张老师"
+./target/release/rs-face name --tracks ./out1/tracks.json --labels labels.txt \
+  --out ./out1/tracks_named.json
+./target/release/rs-face collect --tracks ./out1/tracks_named.json \
+  --frames /tmp/f/frames --out ./dataset --samples 5
+./target/release/rs-face train --dataset ./dataset --algorithm eigenfaces -o ./model.bin
+./target/release/rs-face recognize --model ./model.bin --input new.mp4
+# → 自动输出 "张老师" 在新视频中何时出现
+```
+
+### 关键数字
+
+| 指标 | 数值 |
+|---|---|
+| 二进制体积 | 1 MB (单文件) |
+| 视频处理速度 | 8 fps (M2 / 6 核 / 1440×1080) |
+| ORL 40 人基准 | **98.00% Top-1** (LBPH) |
+| Rust 依赖 | **0** (Cargo.toml `[dependencies]` 为空) |
+| 外部依赖 | 仅 ffmpeg (子进程, 非链接) |
+| 支持平台 | macOS / Linux / Windows |
+
+### 子命令速查
+
+| 子命令 | 用途 |
+|---|---|
+| `detect` | 视频/图片 → 人脸检测 (核心) |
+| `train` | 数据集 → 识别模型 |
+| `recognize` | 模型 + 输入 → 人名 |
+| `benchmark` | ORL/Yale 公开基准 |
+| `name` | tracks.json → tracks_named.json (face_id → 人名) |
+| `collect` | tracks_named.json → 自动数据集 |
+| `info` | 系统/算法信息 |
+
+---
+
+## 🚀 详细文档
+
+Quick Tour 没覆盖的细节从这里开始。
+
 ## ✨ 特性
 
 | 维度 | 实现 |
